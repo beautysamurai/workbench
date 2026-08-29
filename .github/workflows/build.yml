@@ -5,15 +5,25 @@ on:
   pull_request:
 
 jobs:
-  windows:
+  verify-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run check
+
+  package-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
-      - run: npm run check
+      - run: npm ci
+      - run: npm run check:portable
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with:

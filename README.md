@@ -58,7 +58,7 @@ The equivalent npm commands are:
 
 ```powershell
 npm install
-npm run check
+npm run check:portable
 npm run build
 npm start
 ```
@@ -152,13 +152,15 @@ Do not point Workbench or a cloud-connected Codex account at employer source cod
 ## Development
 
 ```powershell
-npm run check       # Type-check main + renderer and run tests
-npm test            # Compile and run Node tests
-npm run build       # Build Electron main, preload, and renderer
-npm run dev         # Build and launch Electron
-npm run dist:dir    # Create an unpacked app
-npm run dist:win    # Create the NSIS Windows installer
+npm run check:portable  # Type-check and run every native-Windows-compatible test
+npm run test:portable   # Compile and run the native-Windows-compatible tests
+npm run build           # Build Electron main, preload, and renderer
+npm run dev             # Build and launch Electron
+npm run dist:dir        # Create an unpacked app
+npm run dist:win        # Create the NSIS Windows installer
 ```
+
+The full `npm run check` and `npm test` commands also run the project-system WSL integration tests. Run those commands from Linux or WSL with dependencies installed in that environment; do not share `node_modules` with native Windows.
 
 The project intentionally avoids a front-end framework and runtime UI dependencies. The renderer is strict TypeScript, semantic HTML, and CSS; this keeps installation small and makes the application easy to inspect and modify.
 

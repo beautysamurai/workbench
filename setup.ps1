@@ -34,8 +34,8 @@ if ($codexVersion) {
 Write-Host "`nInstalling npm packages..." -ForegroundColor Yellow
 npm install
 
-Write-Host "`nType-checking and running tests..." -ForegroundColor Yellow
-npm run check
+Write-Host "`nType-checking and running native-Windows-compatible tests..." -ForegroundColor Yellow
+npm run check:portable
 
 Write-Host "`nBuilding Workbench..." -ForegroundColor Yellow
 npm run build

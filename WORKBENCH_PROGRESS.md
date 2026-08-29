@@ -7,9 +7,9 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 ## Current state
 
 - **Active task:** None
-- **Next task:** P0-002 — GUI enhancement for coding projects
-- **Verified state:** P0-001 complete; Codex thread creation accepts Workbench's default settings, internal reasoning statuses are omitted from the conversation log, checks/build pass, and Electron launches under WSLg
-- **Next action:** Scope P0-002's model selection, project task system, and usage-limit acceptance criteria into reviewable enhancements
+- **Next task:** P0-004 — Review main/preload/renderer and IPC security
+- **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
+- **Next action:** Publish the records-only closeout, confirm its dual-event workflows and automated review remain green, then obtain the required write-access approval and retry the user-authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -279,3 +279,227 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Task-board update: P2-003 added as done.
 - Changelog/docs update: no changelog entry; this is an engineering-process change rather than user-visible application behavior.
 - Remaining action: a repository administrator enables the GitHub branch ruleset; subsequent remotely delivered tasks exercise and record the loop.
+
+### 2026-08-29 22:00 JST — P0-003 repaired the automated verification topology
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64
+- Node version: `v22.23.2`
+- Package manager: npm `10.9.8`, selected from `package-lock.json`
+- Base commit / branch: `4da6c4b` / `codex/fix-windows-ci-baseline`
+- Working tree: clean auxiliary worktree created from `origin/main`; unrelated P0-002 and user-created changes in the primary worktree were not staged, stashed, or modified
+
+**Observed behavior**
+
+- Goal: restore meaningful repository CI for pull requests without weakening or skipping the project-system integration tests.
+- Reproduction: GitHub Actions run `33253151035`, job `99102187447`, failed `npm run check` on Windows after 22 of 24 tests passed; `npm run dist:win` and artifact upload were skipped.
+- Baseline evidence: the same two project-system tests failed on unchanged `main` commit `4da6c4b` in run `33241495957`, so the failure predates pull request #1.
+- Expected: repository verification executes in an environment that provides the POSIX filesystem and Bash behavior used by the project-system service, while the Windows installer is still built on Windows.
+- Actual: one Windows job ran the full test suite before packaging. The project fixture names a synthetic `Local Linux` distribution, causing production transport to call `wsl.exe -d "Local Linux"` on a hosted runner that does not provide it.
+
+**Diagnosis**
+
+- Classification: CI topology / platform-assumption defect.
+- Root cause: the security-sensitive project-system tests exercise Bash, Linux paths, `realpath`, and symlink boundaries through the production WSL transport. Running them directly on an unprovisioned Windows host is neither portable nor representative, and their failure prevented independent installer evidence.
+- Rejected shortcuts: no platform skip, mocked-success replacement, test weakening, or hosted-runner WSL installation was added.
+
+**Changes**
+
+- Files changed: `.github/workflows/build.yml`, `TASKS.md`, and this append-only progress record.
+- The workflow now runs `npm ci` plus `npm run check` in an Ubuntu verification job.
+- A separate Windows job runs `npm ci`, `npm run dist:win`, and artifact upload independently, so verification and installer evidence are both retained.
+- P0-003 is marked `in progress` until the new remote jobs and final automated review complete.
+- No changelog entry was added because this changes engineering verification, not application behavior.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm ci` | Clean lockfile-based dependency install completed; exit `0`. |
+| passed | `npm run check` | Strict main/renderer type checks and all eight compiled test files passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `node -e "const fs=require('node:fs'); const yaml=require('js-yaml'); yaml.load(fs.readFileSync('.github/workflows/build.yml','utf8')); console.log('workflow yaml parsed')"` | `.github/workflows/build.yml` parsed successfully; exit `0`. |
+| passed | `git diff --check` | No whitespace errors; exit `0`. |
+| unavailable locally | `npm run dist:win` | Native Windows packaging is assigned to the new Windows CI job; this WSL session is not recorded as Windows evidence. |
+| pending | GitHub Actions and automated pull-request review | The focused branch has not yet been published at this point in the record. |
+
+**Current state**
+
+- Remaining risk: Ubuntu validates the real POSIX project-store behavior but not the Windows-to-WSL envelope or DrvFS semantics; those require a provisioned Windows+WSL runner or manual smoke environment.
+- Repository policy gap: active ruleset `21797957` requests Copilot review and protects deletion/non-fast-forward updates, but does not currently require either workflow status context; the jobs provide CI evidence without being merge-required checks.
+- Next action: publish the focused P0-003 pull request, verify both jobs, disposition automated review findings, then mark the task done if the final head is green.
+- Blocker: none established.
+
+### 2026-08-29 22:20 JST — P0-003 retained portable Windows test coverage
+
+**Remote evidence before review fix**
+
+- Pull request: `#2`, head `7faad0d40f75c662a97af57b6ea864cf9a337230`.
+- GitHub Actions run `33254336533` completed successfully: `verify-linux` job `99105323437` passed `npm run check`; `package-windows` job `99105323518` passed `npm run dist:win` and artifact upload.
+- Artifact `Workbench-Windows` (`9715349077`) was uploaded at 110,921,354 bytes with digest `sha256:6987ee0e8829121613d825b0749b255f855bf98b22a64608b60b2b6a663dd5b7`.
+- Automated Codex review completed on `7faad0d` with one P2 finding: the Windows packaging job no longer ran Windows-compatible tests, so platform-specific regressions outside the WSL integration cases could escape.
+
+**Review disposition and changes**
+
+- Disposition: accepted. Linux-only execution is correct for the two tests that invoke the production WSL/Bash project transport, but it was too broad for the remaining portable suite.
+- Moved only those two integration cases into `tests/wsl/project-system.test.ts`; the pure parser/formatter coverage remains in the root portable suite.
+- Added reusable `typecheck`, `test:portable`, and `check:portable` package scripts. Full `test`/`check` now explicitly include the nested WSL suite.
+- The Windows job now runs `npm run check:portable` before packaging. Root test discovery automatically includes future portable test files without conditionals, test-name exclusions, or an enumerated filename list.
+- Updated `README.md` to distinguish native-Windows portable checks from full Linux/WSL checks and to warn against sharing `node_modules` across those environments.
+- Files changed for the review fix: `.github/workflows/build.yml`, `package.json`, `tests/project-system.test.ts`, `tests/wsl/project-system.test.ts`, `README.md`, and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until the final Windows portable check, full Linux check, packaging job, and automated re-review pass. No changelog entry was added because the change affects engineering verification rather than application behavior.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run check` | Both TypeScript projects and nine compiled test files passed, including `dist-test/tests/wsl/project-system.test.js`; exit `0`. |
+| passed | `npm run check:portable` | Both TypeScript projects and the eight root portable test files passed; the WSL-only file was not selected; exit `0`. |
+| passed | `rg --files dist-test/tests` | Confirmed eight root test files and the isolated `dist-test/tests/wsl/project-system.test.js`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed after the script/test split; exit `0`. |
+| passed | `git diff --check` | No whitespace errors; exit `0`. |
+| pending | final GitHub Actions run and automated re-review | The accepted finding fix and completion records have not yet been published at this point in the append-only record. Final pushed-head evidence belongs in PR #2 and the delivery response without another evidence-only commit. |
+
+**Current state**
+
+- Coverage contract: portable type/tests run on both Ubuntu and Windows; WSL/Bash integration tests run for real on Ubuntu; the Windows installer builds and uploads independently.
+- Remaining risk: actual `wsl.exe` and DrvFS behavior still require a provisioned Windows+WSL runner or manual smoke environment.
+- Review thread: resolve the accepted finding only after the final branch includes this change; request automatic re-review of the new head.
+- Merge: not performed; merge authorization remains separate from implementation delivery.
+- Blocker: none established.
+
+### 2026-08-29 22:33 JST — P0-003 made test selection explicit and non-vacuous
+
+**Automated re-review finding**
+
+- Re-review completed on PR #2 head `6e1106700d2ebe83b85b8e2c43b4057c7fd7fc13` with one new P2 concern: a shell might pass `dist-test/tests/*.test.js` literally and Node can exit successfully after selecting zero tests.
+- Direct Windows evidence qualifies the finding: job `99107209399` ran the exact `npm run check:portable` script and reported tests `1..22`, `pass 22`, `fail 0`. The quoted zero-test reproduction therefore did not match the actual workflow invocation.
+- Disposition: partially accepted as baseline hardening. The pushed command was not vacuous, but test selection should not depend on shell/platform glob behavior and an empty suite must fail explicitly.
+
+**Changes**
+
+- Added `scripts/run-tests.cjs`, which validates its mode, deterministically enumerates compiled `.test.js` files, prints the selected inventory, passes explicit paths to the Node test runner without a shell, and fails if no files are selected.
+- Portable mode selects only root test files; full mode recursively includes the nested WSL integration suite.
+- Full mode also fails if the expected WSL suite is absent, and `scripts/clean-tests.cjs` removes stale compiled tests before every test build.
+- Updated `test:portable` and `test` to use the shared enumerator. Type-check and workflow commands remain unchanged.
+- Files changed for this re-review response: `package.json`, `scripts/clean-tests.cjs`, `scripts/run-tests.cjs`, and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until both explicit-selection modes and the final remote jobs/re-review pass.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run check:portable` | Type-checked both projects, then printed and passed the eight selected root test files; exit `0`. |
+| passed | `npm run check` | Printed all nine selected files, including `dist-test/tests/wsl/project-system.test.js`, then passed the full suite; exit `0`. |
+| passed failure path | `node scripts/run-tests.cjs portable` with an empty `dist-test/tests` | Refused the empty selection with `No portable compiled test files found`; exit `1`. |
+| passed failure path | `node scripts/run-tests.cjs full` after temporarily moving the generated WSL test file aside | Refused to report a full pass without a WSL integration file; exit `1`; the generated file was restored. |
+| passed | create `dist-test/tests/stale.test.js`, then `npm run build:tests` and `test ! -e dist-test/tests/stale.test.js` | The test-only clean removed the stale compiled file before TypeScript rebuilt current sources; exits `0`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `node -e "const fs=require('node:fs'); const yaml=require('js-yaml'); yaml.load(fs.readFileSync('.github/workflows/build.yml','utf8')); console.log('workflow yaml parsed')"`; `git diff --check` | Workflow syntax parsed and the diff has no whitespace errors; exits `0`. |
+| pending | final GitHub Actions run and automated re-review | Explicit-selection changes have not yet been published at this point in the append-only record. |
+
+**Current state**
+
+- P0-003 remains in progress pending final remote evidence on the explicit enumerator.
+- Blocker: none established.
+
+### 2026-08-29 22:43 JST — P0-003 aligned the native Windows setup path
+
+**Remote evidence and review**
+
+- PR #2 head `92718bd8ad75645469f4ca5fe57af3567a78d7e5` passed GitHub Actions run `33255596807`.
+- Linux job `99108608271` printed nine explicit files including the WSL integration suite and passed 24 of 24 tests.
+- Windows job `99108608213` printed eight explicit portable files and passed 22 of 22 tests, then built the installer and uploaded artifact `9715718791` with digest `sha256:b9514a3e2080bf3e01f32d6ca0d31e4b37b28e7de6e5070f72e098463d931428`.
+- Automated re-review accepted the explicit enumerator but found that native `setup.ps1` still invoked full `npm run check`, contradicting the updated README and reintroducing the original WSL-only failure during setup.
+
+**Disposition and change**
+
+- Disposition: accepted. `setup.ps1` is a native Windows entry point and must use the same portable verification contract as the Windows CI job.
+- Updated its verification command to `npm run check:portable` and made the setup status message explicit.
+- Files changed for this review response: `setup.ps1` and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until the final Windows CI run and automated re-review pass on this setup-aligned head.
+
+**Verification state**
+
+- The exact `npm run check:portable` command passed on native Windows in job `99108608213` with 22 tests; local portable/full/failure/build checks remain green from the preceding entry.
+- PowerShell syntax execution is unavailable in this WSL environment because `pwsh` is not installed; the change is a literal npm-command substitution and will be reviewed on the final head.
+- Required next checks: `git diff --check`, final GitHub Actions Linux/Windows jobs, artifact upload, and automated re-review.
+- Blocker: none established.
+
+### 2026-08-29 22:49 JST — P0-003 completed the automated verification baseline
+
+**Final task-head evidence**
+
+- Pull request #2 task head `dfeacb84e2bcd9c10664a6da3b7683f6d743ec79` passed GitHub Actions run `33255824478`.
+- Linux job `99109222700` completed `npm ci` and the full `npm run check` successfully.
+- Windows job `99109222775` completed `npm ci`, `npm run check:portable`, `npm run dist:win`, and artifact upload successfully.
+- Artifact `Workbench-Windows` (`9715782305`) was uploaded at 110,921,329 bytes with digest `sha256:5fefc23174ba3f2ea6066bc945e0a9724430b7b72e489301c698e9bb6bc68bb4`.
+- Automated Codex re-review completed on `dfeacb8` with no new finding. All three earlier threads are resolved: retain Windows-compatible tests was accepted and fixed; shell-independent, fail-closed discovery was accepted as hardening while its zero-test premise was disproved by the Windows job; and native `setup.ps1` was aligned with the portable contract.
+
+**Closeout**
+
+- P0-003 is marked `done`. The baseline now gives independent evidence for full Linux/WSL verification and native-Windows portable verification, installer creation, and artifact upload without skipping or mocking the WSL integration cases.
+- Files changed for this records-only closeout: `TASKS.md` and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this is engineering verification rather than user-visible application behavior.
+- `git diff --check` passes for the complete branch diff.
+- Remaining risk: hosted CI still does not exercise the actual Windows-to-WSL `wsl.exe` envelope or DrvFS behavior; that needs a provisioned Windows+WSL runner or a manual environment. `package.json` has no lint script, so lint remains explicitly unavailable.
+- Repository policy note: ruleset `21797957` does not currently require the workflow contexts, although the repository CI evidence is green.
+- Merge was not performed; human approval and merge authorization remain separate. After this closeout commit is pushed, its CI and automated review must complete before PR #2 is handed off. Their final state belongs in the pull-request description and delivery response, not another evidence-only commit.
+- Next task: P0-004 — Review main/preload/renderer and IPC security.
+- Blocker: none established.
+
+### 2026-08-29 23:29 JST — P0-003 reopened after push-event packaging exposed implicit publication
+
+**Correction and reproduction**
+
+- The preceding closeout was premature because it inspected only pull-request-event workflow run `33256164787`. The same head `8eafd1fcacc0d8d46264f8173b377e649cd5ef90` also had push-event run `33256162755`, which failed.
+- In push job `99110138262`, `npm ci`, all 22 portable Windows tests, production compilation, NSIS installer creation, signing, and block-map creation succeeded. Electron-builder 26.15.3 then logged `Implicit publishing triggered by CI detection` and exited `1` because `GH_TOKEN` was absent; artifact upload was skipped.
+- The duplicate pull-request job succeeded with the same source because that event did not trigger implicit publishing. The defect is therefore event-dependent publication behavior, not an installer-build failure.
+
+**Diagnosis and change**
+
+- `npm run dist:win` is documented and used as an installer-build command. It must not infer a release or require publishing credentials merely because it runs under CI.
+- Updated `package.json` so `dist:win` invokes `electron-builder --win nsis --publish never`. The option is supported by the pinned electron-builder CLI and makes the non-publishing contract explicit in local, push, and pull-request environments.
+- No token or workflow write permission was added: mapping a GitHub token into `GH_TOKEN` would authorize the unintended side effect instead of preventing it.
+- Reopened P0-003 as `in progress` and corrected the mutable summary. The prior append-only entry remains intact as historical evidence.
+- Files changed: `package.json`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this is engineering verification behavior, not an application feature.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm pkg get scripts.dist:win` | Printed `npm run build && electron-builder --win nsis --publish never`; exit `0`. |
+| passed | `./node_modules/.bin/electron-builder --version`; `./node_modules/.bin/electron-builder --help \| rg -n -- '--publish'` | Confirmed pinned version `26.15.3` and the supported `never` publish mode; exits `0`. |
+| passed | `npm run check:portable` | Both TypeScript projects and the eight selected portable test files passed; exit `0`. |
+| passed | `npm run check` | Both TypeScript projects and all nine selected files, including the WSL integration suite, passed; exit `0`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | workflow YAML parse with installed `js-yaml`; `git diff --check` | Existing workflow parsed and the scoped diff has no whitespace errors; exits `0`. |
+| pending | complete push- and pull-request-event workflows | Each correction-head run must pass full Linux verification plus portable Windows tests, packaging, and artifact upload without an implicit-publication message or `GH_TOKEN` error. |
+| pending | automated re-review | The corrected head has not yet been published at this point in the append-only record. |
+
+**Closeout state**
+
+- P0-003 remains in progress until both workflow events and the automated review are green on the correction head. Then exactly one records-only commit will mark the task done; that commit's own dual-event runs and review belong in the PR body and final handoff, not another evidence-only commit.
+- Merge attempt was rejected by the repository's one-write-reviewer approval rule; it did not change `main`. The user authorized the merge, but retry remains gated on repaired CI and the required write-access approval.
+- Blocker: none established while the fix and remote verification remain actionable.
+
+### 2026-08-29 23:36 JST — P0-003 passed push- and pull-request-event packaging verification
+
+**Correction-head evidence**
+
+- PR #2 correction head `ecbbbc7eb6417b7472d44ca7b472c57f44866d58` completed both workflow events successfully.
+- Push run `33257917864`: Linux job `99114747056` selected nine files including the WSL integration suite and passed 24 of 24 tests. Windows job `99114746920` passed 22 of 22 portable tests, built with `electron-builder --win nsis --publish never`, and uploaded artifact `9716389292` at 110,921,352 bytes with digest `sha256:a37cdb6edd2c9d82db91003cf08b4d033ad85e2e456b6aa82196296648eae7fa`.
+- Pull-request run `33257919584`: Linux job `99114751596` selected the same full suite and passed 24 of 24 tests. Windows job `99114751497` passed 22 of 22 portable tests, used the same explicit non-publishing command, and uploaded artifact `9716393960` at 110,921,302 bytes with digest `sha256:8f2d589ad84c9a528bd4a653e4e00ea02fedd12c2472db28e2f9688fa9bb1de1`.
+- Neither Windows log contains `Implicit publishing triggered`, `GH_TOKEN`, or the prior missing-token error. Both artifact uploads completed successfully.
+- Automated Codex re-review completed on `ecbbbc7` with no new finding. All three prior review threads remain resolved and zero unresolved threads remain.
+
+**Closeout**
+
+- P0-003 is marked `done` again with evidence from both event paths; the mutable summary advances to P0-004.
+- Files changed for this records-only closeout: `TASKS.md` and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this remains engineering verification behavior.
+- `git diff --check origin/main` passes for the complete branch diff.
+- The records-only closeout head must now complete its own push and pull-request workflows plus automated review. Their final state will be reported in PR #2 and the delivery handoff without another evidence-only commit.
+- The user authorized merging PR #2, but repository rules still require an approval from a reviewer with write access. Merge retry remains gated on that approval and final green closeout evidence.
+- Next task: P0-004 — Review main/preload/renderer and IPC security.
+- Blocker: none established while final closeout verification remains actionable.
