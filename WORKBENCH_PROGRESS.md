@@ -8,8 +8,8 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** P0-003 — Establish a trustworthy automated verification baseline
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-001 and P0-002 are complete; P0-003's Linux verification passes locally, while the split Linux/Windows GitHub jobs and final review remain pending
-- **Next action:** Publish the focused P0-003 pull request, verify both GitHub jobs, and disposition automated review findings
+- **Verified state:** P0-001 and P0-002 are complete; P0-003 has passing full and portable local checks plus a successful initial split Linux/Windows GitHub run, while the accepted review fix awaits pushed-head CI and re-review
+- **Next action:** Publish the accepted PR #2 review fix, confirm the final GitHub jobs and automated re-review, then mark P0-003 done and hand off the green PR for separately authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -330,4 +330,42 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Remaining risk: Ubuntu validates the real POSIX project-store behavior but not the Windows-to-WSL envelope or DrvFS semantics; those require a provisioned Windows+WSL runner or manual smoke environment.
 - Repository policy gap: active ruleset `21797957` requests Copilot review and protects deletion/non-fast-forward updates, but does not currently require either workflow status context; the jobs provide CI evidence without being merge-required checks.
 - Next action: publish the focused P0-003 pull request, verify both jobs, disposition automated review findings, then mark the task done if the final head is green.
+- Blocker: none established.
+
+### 2026-08-29 22:20 JST — P0-003 retained portable Windows test coverage
+
+**Remote evidence before review fix**
+
+- Pull request: `#2`, head `7faad0d40f75c662a97af57b6ea864cf9a337230`.
+- GitHub Actions run `33254336533` completed successfully: `verify-linux` job `99105323437` passed `npm run check`; `package-windows` job `99105323518` passed `npm run dist:win` and artifact upload.
+- Artifact `Workbench-Windows` (`9715349077`) was uploaded at 110,921,354 bytes with digest `sha256:6987ee0e8829121613d825b0749b255f855bf98b22a64608b60b2b6a663dd5b7`.
+- Automated Codex review completed on `7faad0d` with one P2 finding: the Windows packaging job no longer ran Windows-compatible tests, so platform-specific regressions outside the WSL integration cases could escape.
+
+**Review disposition and changes**
+
+- Disposition: accepted. Linux-only execution is correct for the two tests that invoke the production WSL/Bash project transport, but it was too broad for the remaining portable suite.
+- Moved only those two integration cases into `tests/wsl/project-system.test.ts`; the pure parser/formatter coverage remains in the root portable suite.
+- Added reusable `typecheck`, `test:portable`, and `check:portable` package scripts. Full `test`/`check` now explicitly include the nested WSL suite.
+- The Windows job now runs `npm run check:portable` before packaging. Root test discovery automatically includes future portable test files without conditionals, test-name exclusions, or an enumerated filename list.
+- Updated `README.md` to distinguish native-Windows portable checks from full Linux/WSL checks and to warn against sharing `node_modules` across those environments.
+- Files changed for the review fix: `.github/workflows/build.yml`, `package.json`, `tests/project-system.test.ts`, `tests/wsl/project-system.test.ts`, `README.md`, and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until the final Windows portable check, full Linux check, packaging job, and automated re-review pass. No changelog entry was added because the change affects engineering verification rather than application behavior.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run check` | Both TypeScript projects and nine compiled test files passed, including `dist-test/tests/wsl/project-system.test.js`; exit `0`. |
+| passed | `npm run check:portable` | Both TypeScript projects and the eight root portable test files passed; the WSL-only file was not selected; exit `0`. |
+| passed | `rg --files dist-test/tests` | Confirmed eight root test files and the isolated `dist-test/tests/wsl/project-system.test.js`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed after the script/test split; exit `0`. |
+| passed | `git diff --check` | No whitespace errors; exit `0`. |
+| pending | final GitHub Actions run and automated re-review | The accepted finding fix and completion records have not yet been published at this point in the append-only record. Final pushed-head evidence belongs in PR #2 and the delivery response without another evidence-only commit. |
+
+**Current state**
+
+- Coverage contract: portable type/tests run on both Ubuntu and Windows; WSL/Bash integration tests run for real on Ubuntu; the Windows installer builds and uploads independently.
+- Remaining risk: actual `wsl.exe` and DrvFS behavior still require a provisioned Windows+WSL runner or manual smoke environment.
+- Review thread: resolve the accepted finding only after the final branch includes this change; request automatic re-review of the new head.
+- Merge: not performed; merge authorization remains separate from implementation delivery.
 - Blocker: none established.

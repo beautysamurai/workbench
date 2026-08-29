@@ -15,8 +15,11 @@
     "dist:dir": "npm run build && electron-builder --dir",
     "dist:win": "npm run build && electron-builder --win nsis",
     "build:tests": "tsc -p tsconfig.test.json",
-    "test": "npm run build:tests && node --test dist-test/tests/*.test.js",
-    "check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && npm run test"
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test:portable": "npm run build:tests && node --test dist-test/tests/*.test.js",
+    "test": "npm run build:tests && node --test dist-test/tests/*.test.js dist-test/tests/wsl/*.test.js",
+    "check:portable": "npm run typecheck && npm run test:portable",
+    "check": "npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "24.0.4",
