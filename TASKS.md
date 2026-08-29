@@ -51,7 +51,7 @@ States: `pending` · `in progress` · `blocked` · `done`
 
 | Priority | ID | State | Task | Completion evidence |
 |---|---|---|---|---|
-| P0 | P0-003 | pending | Establish a trustworthy automated verification baseline | Script inventory plus exact type/test/lint/build results; add only high-value missing checks |
+| P0 | P0-003 | in progress | Establish a trustworthy automated verification baseline | Script inventory plus exact type/test/lint/build results; add only high-value missing checks |
 | P0 | P0-004 | pending | Review main/preload/renderer and IPC security | Applicable Electron-security checklist items evidenced or explicitly unavailable; focused tests where practical |
 | P1 | P1-001 | pending | Verify terminal and process lifecycle | Applicable terminal checklist items evidenced or explicitly unavailable, including CWD, I/O, cancel, restart, and cleanup |
 | P1 | P1-002 | pending | Verify workspace behavior and path handling | Applicable workspace checklist items evidenced or explicitly unavailable, including path boundaries and platform forms |

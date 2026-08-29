@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** None
-- **Next task:** P0-002 — GUI enhancement for coding projects
-- **Verified state:** P0-001 complete; Codex thread creation accepts Workbench's default settings, internal reasoning statuses are omitted from the conversation log, checks/build pass, and Electron launches under WSLg
-- **Next action:** Scope P0-002's model selection, project task system, and usage-limit acceptance criteria into reviewable enhancements
+- **Active task:** P0-003 — Establish a trustworthy automated verification baseline
+- **Next task:** P0-004 — Review main/preload/renderer and IPC security
+- **Verified state:** P0-001 and P0-002 are complete; P0-003's Linux verification passes locally, while the split Linux/Windows GitHub jobs and final review remain pending
+- **Next action:** Publish the focused P0-003 pull request, verify both GitHub jobs, and disposition automated review findings
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -279,3 +279,55 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Task-board update: P2-003 added as done.
 - Changelog/docs update: no changelog entry; this is an engineering-process change rather than user-visible application behavior.
 - Remaining action: a repository administrator enables the GitHub branch ruleset; subsequent remotely delivered tasks exercise and record the loop.
+
+### 2026-08-29 22:00 JST — P0-003 repaired the automated verification topology
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64
+- Node version: `v22.23.2`
+- Package manager: npm `10.9.8`, selected from `package-lock.json`
+- Base commit / branch: `4da6c4b` / `codex/fix-windows-ci-baseline`
+- Working tree: clean auxiliary worktree created from `origin/main`; unrelated P0-002 and user-created changes in the primary worktree were not staged, stashed, or modified
+
+**Observed behavior**
+
+- Goal: restore meaningful repository CI for pull requests without weakening or skipping the project-system integration tests.
+- Reproduction: GitHub Actions run `33253151035`, job `99102187447`, failed `npm run check` on Windows after 22 of 24 tests passed; `npm run dist:win` and artifact upload were skipped.
+- Baseline evidence: the same two project-system tests failed on unchanged `main` commit `4da6c4b` in run `33241495957`, so the failure predates pull request #1.
+- Expected: repository verification executes in an environment that provides the POSIX filesystem and Bash behavior used by the project-system service, while the Windows installer is still built on Windows.
+- Actual: one Windows job ran the full test suite before packaging. The project fixture names a synthetic `Local Linux` distribution, causing production transport to call `wsl.exe -d "Local Linux"` on a hosted runner that does not provide it.
+
+**Diagnosis**
+
+- Classification: CI topology / platform-assumption defect.
+- Root cause: the security-sensitive project-system tests exercise Bash, Linux paths, `realpath`, and symlink boundaries through the production WSL transport. Running them directly on an unprovisioned Windows host is neither portable nor representative, and their failure prevented independent installer evidence.
+- Rejected shortcuts: no platform skip, mocked-success replacement, test weakening, or hosted-runner WSL installation was added.
+
+**Changes**
+
+- Files changed: `.github/workflows/build.yml`, `TASKS.md`, and this append-only progress record.
+- The workflow now runs `npm ci` plus `npm run check` in an Ubuntu verification job.
+- A separate Windows job runs `npm ci`, `npm run dist:win`, and artifact upload independently, so verification and installer evidence are both retained.
+- P0-003 is marked `in progress` until the new remote jobs and final automated review complete.
+- No changelog entry was added because this changes engineering verification, not application behavior.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm ci` | Clean lockfile-based dependency install completed; exit `0`. |
+| passed | `npm run check` | Strict main/renderer type checks and all eight compiled test files passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `node -e "const fs=require('node:fs'); const yaml=require('js-yaml'); yaml.load(fs.readFileSync('.github/workflows/build.yml','utf8')); console.log('workflow yaml parsed')"` | `.github/workflows/build.yml` parsed successfully; exit `0`. |
+| passed | `git diff --check` | No whitespace errors; exit `0`. |
+| unavailable locally | `npm run dist:win` | Native Windows packaging is assigned to the new Windows CI job; this WSL session is not recorded as Windows evidence. |
+| pending | GitHub Actions and automated pull-request review | The focused branch has not yet been published at this point in the record. |
+
+**Current state**
+
+- Remaining risk: Ubuntu validates the real POSIX project-store behavior but not the Windows-to-WSL envelope or DrvFS semantics; those require a provisioned Windows+WSL runner or manual smoke environment.
+- Repository policy gap: active ruleset `21797957` requests Copilot review and protects deletion/non-fast-forward updates, but does not currently require either workflow status context; the jobs provide CI evidence without being merge-required checks.
+- Next action: publish the focused P0-003 pull request, verify both jobs, disposition automated review findings, then mark the task done if the final head is green.
+- Blocker: none established.
