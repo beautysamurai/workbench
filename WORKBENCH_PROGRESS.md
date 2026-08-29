@@ -9,7 +9,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 - **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
-- **Next action:** Publish the records-only closeout, confirm its dual-event workflows and automated review remain green, then obtain the required write-access approval and retry the user-authorized merge
+- **Next action:** Publish the accepted applicable-CI review fix on PR #1, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -280,6 +280,48 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Changelog/docs update: no changelog entry; this is an engineering-process change rather than user-visible application behavior.
 - Remaining action: a repository administrator enables the GitHub branch ruleset; subsequent remotely delivered tasks exercise and record the loop.
 
+### 2026-08-29 21:27 JST — P2-003 made pull-request delivery opt-out rather than opt-in
+
+**Observed behavior**
+
+- Goal: make branch creation, scoped commit/push, pull-request creation, CI inspection, and automated review the default closeout for repository-changing tasks.
+- Actual before change: `AGENTS.md` described a pull request as normal but `CODEX_WORKFLOW.md` applied publishing only “when remote delivery is in scope,” so the absence of a separate push/PR request was treated as no authorization.
+- Existing worktree: completed but uncommitted P0-002 source/docs/tests plus user-created `image-3.png`; all were preserved and excluded from this delivery.
+
+**Changes**
+
+- Branch / pull request: `codex/automate-pr-delivery`; https://github.com/beautysamurai/workbench/pull/1.
+- Files delivered: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this scoped `WORKBENCH_PROGRESS.md` entry only.
+- Result: repository-changing tasks now default to an early feature branch and the scoped commit/push/PR/review loop unless the user explicitly opts out or a genuine blocker remains. Merge, release, branch deletion, force-push, and protection overrides remain separately authorized.
+- Audit refinements: required CI must pass; preserved dirty work has an auxiliary-worktree delivery path; follow-up task records are review metadata but their implementation uses a separate branch; and review of the final task commit is reported without creating an endless evidence-only push/re-review cycle.
+
+**Verification and review**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `git diff --check -- AGENTS.md CODEX_WORKFLOW.md REVIEW_CHECKLIST.md` | No whitespace errors. |
+| passed | scoped branch/commit review against `origin/main` | Original commit `ac1b895` changed exactly the three workflow Markdown files; unrelated working-tree files remained unstaged and unpublished. |
+| passed | GitHub automated review of `ac1b895` | Completed with no review comments or unresolved threads. |
+| passed | independent workflow-doc audit | Five ambiguities were accepted and corrected: review-loop termination, genuine-blocker scope, dirty-worktree synchronization, CI success semantics, and follow-up-task scope. |
+| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-004 already tracks the verification-baseline repair. |
+
+**Closeout**
+
+- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-004.
+- Changelog/docs update: no changelog entry because this is an engineering-process change, not user-visible application behavior.
+- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-004 fixes the baseline and the PR reruns successfully.
+
+**Automated review follow-up**
+
+- Review of `efac13d` accepted one P2 finding: the published task board calls the verification-baseline task P0-003, while the preserved unpublished P0-002 work renumbers it to P0-004.
+- The pull-request record is corrected to the published P0-003 identifier without staging the unrelated task-board renumbering. The correction commit requires one final automated re-review; its final state will be reported in the pull request and handoff without another evidence-only commit.
+- Review of `d5df121` accepted two further P2 findings: the delivery inventory omitted this progress entry, and the synchronization procedure created the scoped commit after the step that required it. The inventory now lists all four delivered Markdown files, and commit creation now precedes rebase or auxiliary-worktree cherry-picking.
+
+**Erratum**
+
+- The P0-004 references in the closeout above reflect the preserved unpublished task-board renumbering that was present when this entry was drafted. The task published in this pull request's base is P0-003; use P0-003 for the Windows CI baseline repair.
+- Required Windows CI remains failed and delivery remains incomplete pending that actionable P0-003 repair. It is not a genuine blocker under `AGENTS.md`, because no unavailable user input or external dependency prevents the repair.
+
 ### 2026-08-29 22:00 JST — P0-003 repaired the automated verification topology
 
 **Environment**
@@ -503,3 +545,82 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The user authorized merging PR #2, but repository rules still require an approval from a reviewer with write access. Merge retry remains gated on that approval and final green closeout evidence.
 - Next task: P0-004 — Review main/preload/renderer and IPC security.
 - Blocker: none established while final closeout verification remains actionable.
+
+### 2026-08-29 23:49 JST — P2-003 synchronized the delivery-workflow PR after the CI baseline merge
+
+**Context and resolution**
+
+- PR #2 merged the verified P0-003 baseline into `main` at `9c652bac5ca67c81fb7524aaed57c75be165fa17`.
+- PR #1 head `87831ce2c0ac1e7e7f0fca3b8d91436b6404bffb` then conflicted only in `WORKBENCH_PROGRESS.md`, where both branches had appended evidence after the same historical entry.
+- A clean auxiliary worktree merged `origin/main` without force-pushing or touching the dirty primary worktree. The resolution retains PR #1's 21:27 P2-003 entry followed by every later P0-003 entry from `main`; no append-only evidence was deleted or rewritten.
+- The mutable summary keeps P0-001 through P0-003 complete and updates only the next delivery action for PR #1.
+- Relative to repaired `main`, the synchronized PR remains scoped to `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this progress evidence.
+
+**Verification and closeout**
+
+- Host tooling was Node `v22.23.2` with npm `10.9.8`; `npm ci` installed the locked dependency graph successfully.
+- `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including `dist-test/tests/wsl/project-system.test.js`; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`.
+- `package.json` has no lint script, so lint remains explicitly unavailable rather than reported as passed.
+- `git diff --check origin/main` passes for the complete synchronized worktree diff.
+- Manual conflict-marker and chronological-entry review passes; the only conflict was resolved by retaining both append-only sides in timestamp order.
+- No changelog entry was added because this is engineering-process documentation.
+- Required remote evidence: both push- and pull-request-event workflows plus automated re-review on the synchronized PR #1 head. Their final state belongs in the PR body and handoff without another evidence-only commit.
+- Merge of PR #1 remains separately authorized and was not performed.
+- Blocker: none established while synchronization, CI, and review remain actionable.
+
+### 2026-08-30 00:00 JST — P2-003 accepted the final task-branch-base review finding
+
+**Remote evidence and finding**
+
+- Synchronized PR #1 head `8f9a5e43aba9ef7461d1f953126e50e89a1b4649` passed both workflow events: push run `33258900970` and pull-request run `33258902380`.
+- Push Linux job `99117332254` and pull-request Linux job `99117336318` each selected the full nine-file Linux/WSL inventory and passed 24 of 24 tests.
+- Both Windows jobs passed 22 of 22 portable tests and built NSIS with `electron-builder --win nsis --publish never`; neither log contains the prior implicit-publication or missing-`GH_TOKEN` error.
+- Push artifact `9716678952` was uploaded at 110,921,346 bytes with digest `sha256:1f1c308d04fc86a2ac204218f212cf7f96b0a8a1187d4f276f0f969bacfc2876`; pull-request artifact `9716685571` was uploaded at 110,921,375 bytes with digest `sha256:111d15da8e98c25d1523b0f49b93d7378872ca9e06a4b5509871c1a6f1d5cdb1`.
+- Automated Codex re-review completed on `8f9a5e4` and opened one new P2 thread: creating a new task branch from an arbitrary current feature branch can inherit the prior task's commits even after a later rebase onto the default branch.
+
+**Disposition and change**
+
+- Accepted. Fetching the default branch did not by itself select it as the new branch's base.
+- `AGENTS.md` and `CODEX_WORKFLOW.md` now require each new task branch to start explicitly from the fetched default branch without tracking it. When preserved work or prior-task commits make the current checkout unsuitable, the workflow preserves any existing index, transfers only audited commit SHAs or a reviewed binary-capable scoped patch plus explicitly inventoried task-owned untracked files, and creates a fresh clean auxiliary delivery branch from `origin/<default-branch>` without deleting or resetting the unsuitable branch.
+- Published branches now merge an updated default branch deliberately instead of rebasing and requiring a forbidden force-push. Before publication, explicit commit and path audits against the fetched default detect inherited work.
+- If an existing pull request is tied to a contaminated branch that cannot advance safely, the workflow opens and cross-links a replacement from the clean delivery branch instead of force-resetting the old head.
+- `REVIEW_CHECKLIST.md` now verifies the branch base, commit ancestry, changed paths, and absence of inherited work from another task.
+- Files changed for this review fix: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this append-only progress entry. No changelog entry was added because this is engineering-process documentation.
+
+**Verification and remaining action**
+
+- Manual cross-reference review confirms initial setup, staged-index preservation, already-committed and uncommitted recovery (including binary and untracked task files), fresh no-track delivery branches, replacement-PR handling, unpublished-rebase versus published-merge synchronization, ancestry/path auditing, and review-checklist language use the same fetched-default branch contract.
+- `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including the WSL integration suite; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`.
+- `git diff --check origin/main` passes for the complete review-fix worktree diff.
+- The complete PR diff remains limited to the same four Markdown files; no application, test, package, setup, or workflow file is changed relative to `main`.
+- Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
+- Merge of PR #1 remains separately authorized and was not performed.
+- Blocker: none established while the review fix and final verification remain actionable.
+
+### 2026-08-30 00:23 JST — P2-003 required applicable CI independent of branch-protection settings
+
+**Remote evidence and finding**
+
+- PR #1 head `2bddd09e531b5acdce6ea239ee99703978d47094` passed both workflow events. Push run `33259884402` passed Linux job `99119892566` (24 of 24 tests) and Windows job `99119892519` (22 of 22 tests, NSIS packaging, artifact `9716957158` at 110,921,355 bytes with digest `sha256:d95bcb1f6600376c8eb41d035a60c494374f0254b167c8d8ca9d1100d3ab53b9`). Pull-request run `33259886945` passed Linux job `99119899717` (24 of 24) and Windows job `99119899805` (22 of 22, NSIS packaging, artifact `9716955476` at 110,921,356 bytes with digest `sha256:f378a0421aebc49e0690fb2b0be364d44ad82c676b371bfbcef152a1881cdad1`).
+- Both Windows jobs invoked `electron-builder --win nsis --publish never`; neither log contains an implicit-publishing message or the missing-`GH_TOKEN` error.
+- Automated Codex re-review completed on `2bddd09` and opened one new P2 thread: wording limited to “required CI” is vacuous when active ruleset `21797957` does not mark the configured Linux or Windows status contexts as required.
+
+**Disposition and change**
+
+- Accepted. Branch-protection optionality is not evidence that a configured, relevant verification or packaging job may fail without blocking delivery.
+- `AGENTS.md`, `CODEX_WORKFLOW.md`, and `REVIEW_CHECKLIST.md` now require every applicable repository CI job to pass, whether or not its status context is marked required by branch protection.
+- Historical progress entries retain their original “required CI” wording as append-only evidence; this entry records the corrected current policy.
+- Files changed for this review fix: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this progress entry. No changelog entry was added because this is engineering-process documentation.
+
+**Verification and remaining action**
+
+- Manual cross-reference review confirms the definition of done, review loop, and checklist use the same applicable-CI rule.
+- `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including the WSL integration suite; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`.
+- `git diff --check origin/main` passes for the complete applicable-CI review-fix worktree diff.
+- The complete PR diff remains limited to the same four Markdown files; no application, test, package, setup, or workflow file is changed relative to `main`.
+- Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
+- Merge of PR #1 remains separately authorized and was not performed.
+- Blocker: none established while the review fix and final verification remain actionable.
