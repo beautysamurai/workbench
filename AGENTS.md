@@ -35,7 +35,7 @@ Also inspect `package.json`, its lockfile, README files, TypeScript and Electron
 - Do not add telemetry, install system-wide software, force-push, rewrite shared history, or make destructive Git changes unless the user explicitly requests it.
 - For every task that changes the repository, remote delivery is in scope by default unless the user explicitly opts out. The absence of a branch, commit, push, or pull-request request is not an opt-out and does not require a separate confirmation.
 - Cut a task-specific feature branch before the first edit when safe. If work already began on the default branch, create the feature branch at the next safe opportunity without discarding or stashing unrelated work. Commit and push only the task's scoped changes after local verification; never include unrelated or user-created changes, and never push directly to the default/protected branch.
-- Complete the pull-request, CI, Copilot review, reflection, and re-review loop automatically. If branch creation, remote delivery, credentials, or repository access remains unavailable after safe diagnosis and required approval attempts, stop after the local closeout and report the smallest required user action.
+- Complete the pull-request, CI, Copilot review, reflection, and re-review loop automatically. If a genuine blocker remains after safe diagnosis and required approval attempts, stop after the local closeout and report the smallest required user action.
 
 ## Standard operating loop
 
@@ -103,4 +103,4 @@ Before stopping, exhaust safe inspection and non-destructive alternatives. Recor
 
 A task is locally complete only when the original symptom has current evidence, the cause is understood, the fix is scoped, relevant available checks pass, important behavior is smoke-tested when possible, no known regression is being concealed, and the task/progress/changelog records match reality.
 
-For a repository-changing task, delivery is complete only when the scoped feature branch has been pushed, a pull request exists, required CI and automated review have completed, and every in-scope finding is fixed or dispositioned. An explicit user opt-out or a recorded access blocker may end the task at local completion. Merging, releasing, deleting branches, or overriding repository protection always remains a separate authorized action.
+For a repository-changing task, delivery is complete only when the scoped feature branch has been pushed, a pull request exists, required CI has passed, automated review has completed on the final task commit, and every in-scope finding is fixed or dispositioned. An explicit user opt-out or a recorded genuine blocker may end the task at local completion. Merging, releasing, deleting branches, or overriding repository protection always remains a separate authorized action.

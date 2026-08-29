@@ -279,3 +279,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Task-board update: P2-003 added as done.
 - Changelog/docs update: no changelog entry; this is an engineering-process change rather than user-visible application behavior.
 - Remaining action: a repository administrator enables the GitHub branch ruleset; subsequent remotely delivered tasks exercise and record the loop.
+
+### 2026-08-29 21:27 JST — P2-003 made pull-request delivery opt-out rather than opt-in
+
+**Observed behavior**
+
+- Goal: make branch creation, scoped commit/push, pull-request creation, CI inspection, and automated review the default closeout for repository-changing tasks.
+- Actual before change: `AGENTS.md` described a pull request as normal but `CODEX_WORKFLOW.md` applied publishing only “when remote delivery is in scope,” so the absence of a separate push/PR request was treated as no authorization.
+- Existing worktree: completed but uncommitted P0-002 source/docs/tests plus user-created `image-3.png`; all were preserved and excluded from this delivery.
+
+**Changes**
+
+- Branch / pull request: `codex/automate-pr-delivery`; https://github.com/beautysamurai/workbench/pull/1.
+- Files delivered: `AGENTS.md`, `CODEX_WORKFLOW.md`, and `REVIEW_CHECKLIST.md` only.
+- Result: repository-changing tasks now default to an early feature branch and the scoped commit/push/PR/review loop unless the user explicitly opts out or a genuine blocker remains. Merge, release, branch deletion, force-push, and protection overrides remain separately authorized.
+- Audit refinements: required CI must pass; preserved dirty work has an auxiliary-worktree delivery path; follow-up task records are review metadata but their implementation uses a separate branch; and review of the final task commit is reported without creating an endless evidence-only push/re-review cycle.
+
+**Verification and review**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `git diff --check -- AGENTS.md CODEX_WORKFLOW.md REVIEW_CHECKLIST.md` | No whitespace errors. |
+| passed | scoped branch/commit review against `origin/main` | Original commit `ac1b895` changed exactly the three workflow Markdown files; unrelated working-tree files remained unstaged and unpublished. |
+| passed | GitHub automated review of `ac1b895` | Completed with no review comments or unresolved threads. |
+| passed | independent workflow-doc audit | Five ambiguities were accepted and corrected: review-loop termination, genuine-blocker scope, dirty-worktree synchronization, CI success semantics, and follow-up-task scope. |
+| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-004 already tracks the verification-baseline repair. |
+
+**Closeout**
+
+- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-004.
+- Changelog/docs update: no changelog entry because this is an engineering-process change, not user-visible application behavior.
+- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-004 fixes the baseline and the PR reruns successfully.

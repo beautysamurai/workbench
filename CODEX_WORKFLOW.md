@@ -15,7 +15,7 @@ git log -5 --oneline
 
 Inspect diffs before touching files that already have changes. Do not clean, reset, stash, or overwrite user work.
 
-For every task that changes the repository, remote delivery is in scope by default unless the user explicitly opts out. After inspecting the worktree, create or confirm a task-specific feature branch before the first edit. Branching preserves a dirty worktree, but it does not authorize staging unrelated or user-created changes. If task work already began on the default branch, cut the feature branch at the next safe opportunity. If Git metadata is sandboxed or read-only, request the required approval instead of silently continuing on the default branch.
+For every task that changes the repository, remote delivery is in scope by default unless the user explicitly opts out. When an `origin` remote exists, fetch it before branching if access is available, then create or confirm a task-specific feature branch before the first edit. Branching preserves a dirty worktree, but it does not authorize staging unrelated or user-created changes. If task work already began on the default branch, cut the feature branch at the next safe opportunity. If Git metadata is sandboxed or read-only, request the required approval instead of silently continuing on the default branch.
 
 ## 2. Inspect the repository before choosing commands
 
@@ -173,7 +173,7 @@ Then:
 4. add only completed user-visible changes to `CHANGELOG.md`;
 5. report what changed, exact checks run, remaining risks, and the next action.
 
-Local closeout is not the end of a repository-changing task unless the user explicitly opted out of remote delivery or access is genuinely blocked. Continue into the publishing and review loop below without asking for a separate confirmation.
+Local closeout is not the end of a repository-changing task unless the user explicitly opted out of remote delivery or a genuine blocker remains. Continue into the publishing and review loop below without asking for a separate confirmation.
 
 ## 10. Synchronize and publish through a pull request
 
@@ -188,7 +188,7 @@ Use this section for every repository-changing task unless the user explicitly o
    git fetch --prune origin
    ```
 
-2. Confirm the work is on its task-specific feature branch; create it immediately if it was not created during initial inspection. Use `git pull --ff-only` only when the current branch already tracks that same remote branch and has no local divergence. If the feature branch is based on an outdated default branch, incorporate the fetched default branch only after confirming the task changes are safely committed and the rebase will not overwrite unrelated work. Prefer `git rebase origin/<default-branch>` for an unpublished or solely owned feature branch. Do not run a blind `git pull`, create an automatic merge commit, or rebase a shared branch.
+2. Confirm the work is on its task-specific feature branch; create it immediately if it was not created during initial inspection. Use `git pull --ff-only` only when the current branch already tracks that same remote branch and has no local divergence. If the feature branch is based on an outdated default branch, incorporate the fetched default branch only after confirming the task changes are safely committed and the rebase will not overwrite unrelated work. Prefer `git rebase origin/<default-branch>` for an unpublished or solely owned feature branch. If preserved unrelated changes make an in-place rebase impossible, use a clean auxiliary worktree based on the fetched default branch and cherry-pick only the scoped task commits onto its delivery branch; do not stash or publish the unrelated work. Do not run a blind `git pull`, create an automatic merge commit, or rebase a shared branch.
 3. Re-run relevant checks after synchronization and resolve conflicts deliberately. Review the resulting diff against the fetched default branch.
 4. Stage only files belonging to the task, inspect the staged diff, and create a focused commit. Do not use broad staging when unrelated changes exist.
 5. Push the feature branch with an explicit upstream, then create or update a pull request without pausing for a separate delivery confirmation. The pull-request body must summarize the change, list exact verification, call out risks or unavailable checks, and link the relevant task.
@@ -213,9 +213,9 @@ For every pull request:
 3. Reflect on each finding against the code, tests, security boundaries, and acceptance criteria. Classify it as:
    - **accepted** — implement the smallest complete fix and add or adjust verification;
    - **not applicable / incorrect** — document the evidence-based reason in the pull request;
-   - **follow-up** — create a scoped task only when it is valid but genuinely outside the pull request's scope.
-4. Update `WORKBENCH_PROGRESS.md` with the review findings and dispositions, commit the accepted fixes, and push the feature branch. With **Review new pushes** enabled, Copilot automatically re-reviews the new commit.
+   - **follow-up** — document the finding in the pull request and add a concise `TASKS.md` queue entry as review metadata when appropriate; do not implement it in the current pull request. Its implementation is a separate task with its own branch and pull request.
+4. When review produces an accepted fix or another task-scoped repository change, update `WORKBENCH_PROGRESS.md` with the findings and dispositions, commit the change, and push the feature branch. With **Review new pushes** enabled, Copilot automatically re-reviews the new commit. Do not create another evidence-only commit solely to record the completed review of the final task commit, because that push would invalidate the just-reviewed head.
 5. Repeat until required CI is green, every actionable Copilot finding is fixed or explicitly dispositioned, no unresolved in-scope review thread remains, and the final diff has been reviewed again locally.
-6. Report the final review state and remaining risks. Copilot submits advisory comment reviews; it does not approve the pull request and does not replace required human approval or the merge policy.
+6. Report the final review state and remaining risks in the pull request and final response. The last in-repository progress entry may describe the preceding review and the changes that produced the final reviewed commit; it need not trigger an endless evidence-only push. Copilot submits advisory comment reviews; it does not approve the pull request and does not replace required human approval or the merge policy.
 
 Do not auto-merge merely because Copilot has commented or CI is green. Merging, releasing, deleting the branch, or overriding a protection rule remains a separate authorized action.
