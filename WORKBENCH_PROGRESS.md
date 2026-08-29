@@ -404,3 +404,26 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - P0-003 remains in progress pending final remote evidence on the explicit enumerator.
 - Blocker: none established.
+
+### 2026-08-29 22:43 JST — P0-003 aligned the native Windows setup path
+
+**Remote evidence and review**
+
+- PR #2 head `92718bd8ad75645469f4ca5fe57af3567a78d7e5` passed GitHub Actions run `33255596807`.
+- Linux job `99108608271` printed nine explicit files including the WSL integration suite and passed 24 of 24 tests.
+- Windows job `99108608213` printed eight explicit portable files and passed 22 of 22 tests, then built the installer and uploaded artifact `9715718791` with digest `sha256:b9514a3e2080bf3e01f32d6ca0d31e4b37b28e7de6e5070f72e098463d931428`.
+- Automated re-review accepted the explicit enumerator but found that native `setup.ps1` still invoked full `npm run check`, contradicting the updated README and reintroducing the original WSL-only failure during setup.
+
+**Disposition and change**
+
+- Disposition: accepted. `setup.ps1` is a native Windows entry point and must use the same portable verification contract as the Windows CI job.
+- Updated its verification command to `npm run check:portable` and made the setup status message explicit.
+- Files changed for this review response: `setup.ps1` and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until the final Windows CI run and automated re-review pass on this setup-aligned head.
+
+**Verification state**
+
+- The exact `npm run check:portable` command passed on native Windows in job `99108608213` with 22 tests; local portable/full/failure/build checks remain green from the preceding entry.
+- PowerShell syntax execution is unavailable in this WSL environment because `pwsh` is not installed; the change is a literal npm-command substitution and will be reviewed on the final head.
+- Required next checks: `git diff --check`, final GitHub Actions Linux/Windows jobs, artifact upload, and automated re-review.
+- Blocker: none established.
