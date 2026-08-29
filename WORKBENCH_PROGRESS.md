@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** None
+- **Active task:** P0-003 — Establish a trustworthy automated verification baseline
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery runs the full Linux/WSL suite and the portable native-Windows suite, and PR #2's final task head passed both GitHub jobs, Windows packaging, artifact upload, and automated re-review
-- **Next action:** Confirm the records-only closeout head remains green and reviewed, update PR #2 with final evidence, and hand it off for a separately authorized merge before unblocking PR #1
+- **Verified state:** P0-001 and P0-002 are complete; P0-003 is reopened because PR #2's same-head push run exposed an unintended electron-builder publication attempt after creating the NSIS installer, even though the pull-request run passed
+- **Next action:** Publish the scoped non-publishing correction, then require both complete push- and pull-request-event workflows plus automated re-review to pass before closing P0-003 again
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -448,3 +448,38 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Merge was not performed; human approval and merge authorization remain separate. After this closeout commit is pushed, its CI and automated review must complete before PR #2 is handed off. Their final state belongs in the pull-request description and delivery response, not another evidence-only commit.
 - Next task: P0-004 — Review main/preload/renderer and IPC security.
 - Blocker: none established.
+
+### 2026-08-29 23:29 JST — P0-003 reopened after push-event packaging exposed implicit publication
+
+**Correction and reproduction**
+
+- The preceding closeout was premature because it inspected only pull-request-event workflow run `33256164787`. The same head `8eafd1fcacc0d8d46264f8173b377e649cd5ef90` also had push-event run `33256162755`, which failed.
+- In push job `99110138262`, `npm ci`, all 22 portable Windows tests, production compilation, NSIS installer creation, signing, and block-map creation succeeded. Electron-builder 26.15.3 then logged `Implicit publishing triggered by CI detection` and exited `1` because `GH_TOKEN` was absent; artifact upload was skipped.
+- The duplicate pull-request job succeeded with the same source because that event did not trigger implicit publishing. The defect is therefore event-dependent publication behavior, not an installer-build failure.
+
+**Diagnosis and change**
+
+- `npm run dist:win` is documented and used as an installer-build command. It must not infer a release or require publishing credentials merely because it runs under CI.
+- Updated `package.json` so `dist:win` invokes `electron-builder --win nsis --publish never`. The option is supported by the pinned electron-builder CLI and makes the non-publishing contract explicit in local, push, and pull-request environments.
+- No token or workflow write permission was added: mapping a GitHub token into `GH_TOKEN` would authorize the unintended side effect instead of preventing it.
+- Reopened P0-003 as `in progress` and corrected the mutable summary. The prior append-only entry remains intact as historical evidence.
+- Files changed: `package.json`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this is engineering verification behavior, not an application feature.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm pkg get scripts.dist:win` | Printed `npm run build && electron-builder --win nsis --publish never`; exit `0`. |
+| passed | `./node_modules/.bin/electron-builder --version`; `./node_modules/.bin/electron-builder --help \| rg -n -- '--publish'` | Confirmed pinned version `26.15.3` and the supported `never` publish mode; exits `0`. |
+| passed | `npm run check:portable` | Both TypeScript projects and the eight selected portable test files passed; exit `0`. |
+| passed | `npm run check` | Both TypeScript projects and all nine selected files, including the WSL integration suite, passed; exit `0`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | workflow YAML parse with installed `js-yaml`; `git diff --check` | Existing workflow parsed and the scoped diff has no whitespace errors; exits `0`. |
+| pending | complete push- and pull-request-event workflows | Each correction-head run must pass full Linux verification plus portable Windows tests, packaging, and artifact upload without an implicit-publication message or `GH_TOKEN` error. |
+| pending | automated re-review | The corrected head has not yet been published at this point in the append-only record. |
+
+**Closeout state**
+
+- P0-003 remains in progress until both workflow events and the automated review are green on the correction head. Then exactly one records-only commit will mark the task done; that commit's own dual-event runs and review belong in the PR body and final handoff, not another evidence-only commit.
+- Merge attempt was rejected by the repository's one-write-reviewer approval rule; it did not change `main`. The user authorized the merge, but retry remains gated on repaired CI and the required write-access approval.
+- Blocker: none established while the fix and remote verification remain actionable.

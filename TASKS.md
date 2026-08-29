@@ -51,7 +51,7 @@ States: `pending` · `in progress` · `blocked` · `done`
 
 | Priority | ID | State | Task | Completion evidence |
 |---|---|---|---|---|
-| P0 | P0-003 | done | Establish a trustworthy automated verification baseline | Full Linux/WSL check passed 24 tests; native-Windows portable check passed 22 tests; explicit discovery fails closed; NSIS build, artifact upload, and final automated re-review passed; no lint script is available |
+| P0 | P0-003 | in progress | Establish a trustworthy automated verification baseline | PR-event verification and packaging passed, but the same-head push event failed after NSIS creation when electron-builder implicitly attempted publication without `GH_TOKEN`; explicit non-publishing packaging awaits dual-event CI proof and automated re-review |
 | P0 | P0-004 | pending | Review main/preload/renderer and IPC security | Applicable Electron-security checklist items evidenced or explicitly unavailable; focused tests where practical |
 | P1 | P1-001 | pending | Verify terminal and process lifecycle | Applicable terminal checklist items evidenced or explicitly unavailable, including CWD, I/O, cancel, restart, and cleanup |
 | P1 | P1-002 | pending | Verify workspace behavior and path handling | Applicable workspace checklist items evidenced or explicitly unavailable, including path boundaries and platform forms |
