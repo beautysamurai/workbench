@@ -1,0 +1,56 @@
+{
+  "name": "ai-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local workspace control center for ChatGPT and Codex on Windows + WSL.",
+  "author": "Workbench contributors",
+  "license": "MIT",
+  "main": "dist/main/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "clean": "node scripts/clean.cjs",
+    "build": "npm run clean && tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.cjs",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "build:tests": "tsc -p tsconfig.test.json",
+    "test": "npm run build:tests && node --test dist-test/tests/*.test.js",
+    "check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.4",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
+    "typescript": "5.8.3"
+  },
+  "build": {
+    "appId": "com.localworkbench.desktop",
+    "productName": "Workbench",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Workbench-${version}-Setup.${ext}",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Workbench"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
