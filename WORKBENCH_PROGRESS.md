@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-003 — Establish a trustworthy automated verification baseline
+- **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-001 and P0-002 are complete; P0-003 is reopened because PR #2's same-head push run exposed an unintended electron-builder publication attempt after creating the NSIS installer, even though the pull-request run passed
-- **Next action:** Publish the scoped non-publishing correction, then require both complete push- and pull-request-event workflows plus automated re-review to pass before closing P0-003 again
+- **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
+- **Next action:** Publish the records-only closeout, confirm its dual-event workflows and automated review remain green, then obtain the required write-access approval and retry the user-authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -483,3 +483,23 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - P0-003 remains in progress until both workflow events and the automated review are green on the correction head. Then exactly one records-only commit will mark the task done; that commit's own dual-event runs and review belong in the PR body and final handoff, not another evidence-only commit.
 - Merge attempt was rejected by the repository's one-write-reviewer approval rule; it did not change `main`. The user authorized the merge, but retry remains gated on repaired CI and the required write-access approval.
 - Blocker: none established while the fix and remote verification remain actionable.
+
+### 2026-08-29 23:36 JST — P0-003 passed push- and pull-request-event packaging verification
+
+**Correction-head evidence**
+
+- PR #2 correction head `ecbbbc7eb6417b7472d44ca7b472c57f44866d58` completed both workflow events successfully.
+- Push run `33257917864`: Linux job `99114747056` selected nine files including the WSL integration suite and passed 24 of 24 tests. Windows job `99114746920` passed 22 of 22 portable tests, built with `electron-builder --win nsis --publish never`, and uploaded artifact `9716389292` at 110,921,352 bytes with digest `sha256:a37cdb6edd2c9d82db91003cf08b4d033ad85e2e456b6aa82196296648eae7fa`.
+- Pull-request run `33257919584`: Linux job `99114751596` selected the same full suite and passed 24 of 24 tests. Windows job `99114751497` passed 22 of 22 portable tests, used the same explicit non-publishing command, and uploaded artifact `9716393960` at 110,921,302 bytes with digest `sha256:8f2d589ad84c9a528bd4a653e4e00ea02fedd12c2472db28e2f9688fa9bb1de1`.
+- Neither Windows log contains `Implicit publishing triggered`, `GH_TOKEN`, or the prior missing-token error. Both artifact uploads completed successfully.
+- Automated Codex re-review completed on `ecbbbc7` with no new finding. All three prior review threads remain resolved and zero unresolved threads remain.
+
+**Closeout**
+
+- P0-003 is marked `done` again with evidence from both event paths; the mutable summary advances to P0-004.
+- Files changed for this records-only closeout: `TASKS.md` and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this remains engineering verification behavior.
+- `git diff --check origin/main` passes for the complete branch diff.
+- The records-only closeout head must now complete its own push and pull-request workflows plus automated review. Their final state will be reported in PR #2 and the delivery handoff without another evidence-only commit.
+- The user authorized merging PR #2, but repository rules still require an approval from a reviewer with write access. Merge retry remains gated on that approval and final green closeout evidence.
+- Next task: P0-004 — Review main/preload/renderer and IPC security.
+- Blocker: none established while final closeout verification remains actionable.

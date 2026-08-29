@@ -51,7 +51,7 @@ States: `pending` · `in progress` · `blocked` · `done`
 
 | Priority | ID | State | Task | Completion evidence |
 |---|---|---|---|---|
-| P0 | P0-003 | in progress | Establish a trustworthy automated verification baseline | PR-event verification and packaging passed, but the same-head push event failed after NSIS creation when electron-builder implicitly attempted publication without `GH_TOKEN`; explicit non-publishing packaging awaits dual-event CI proof and automated re-review |
+| P0 | P0-003 | done | Establish a trustworthy automated verification baseline | Correction head passed both push- and pull-request-event workflows: each ran 24 Linux/WSL and 22 portable Windows tests, built NSIS with explicit non-publishing mode, and uploaded an artifact; automated re-review was clean; no lint script is available |
 | P0 | P0-004 | pending | Review main/preload/renderer and IPC security | Applicable Electron-security checklist items evidenced or explicitly unavailable; focused tests where practical |
 | P1 | P1-001 | pending | Verify terminal and process lifecycle | Applicable terminal checklist items evidenced or explicitly unavailable, including CWD, I/O, cancel, restart, and cleanup |
 | P1 | P1-002 | pending | Verify workspace behavior and path handling | Applicable workspace checklist items evidenced or explicitly unavailable, including path boundaries and platform forms |
