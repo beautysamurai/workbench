@@ -4,6 +4,8 @@ Use the relevant sections after the application has a reproducible baseline. Rec
 
 ## Pull request delivery and reflection
 
+- [ ] Remote delivery ran by default, or an explicit user opt-out/access blocker is recorded; lack of a separate push/PR request was not treated as an opt-out.
+- [ ] The task-specific feature branch was created before the first edit, or the record explains why it was cut at the next safe opportunity.
 - [ ] The feature branch was synchronized with the fetched default branch without overwriting unrelated work.
 - [ ] Only task-scoped changes were staged, committed, and pushed; the default/protected branch was not pushed directly.
 - [ ] The pull request states the behavior change, exact verification, unavailable checks, risks, and task reference.

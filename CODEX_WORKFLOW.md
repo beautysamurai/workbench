@@ -15,6 +15,8 @@ git log -5 --oneline
 
 Inspect diffs before touching files that already have changes. Do not clean, reset, stash, or overwrite user work.
 
+For every task that changes the repository, remote delivery is in scope by default unless the user explicitly opts out. After inspecting the worktree, create or confirm a task-specific feature branch before the first edit. Branching preserves a dirty worktree, but it does not authorize staging unrelated or user-created changes. If task work already began on the default branch, cut the feature branch at the next safe opportunity. If Git metadata is sandboxed or read-only, request the required approval instead of silently continuing on the default branch.
+
 ## 2. Inspect the repository before choosing commands
 
 At minimum, inspect:
@@ -171,9 +173,11 @@ Then:
 4. add only completed user-visible changes to `CHANGELOG.md`;
 5. report what changed, exact checks run, remaining risks, and the next action.
 
+Local closeout is not the end of a repository-changing task unless the user explicitly opted out of remote delivery or access is genuinely blocked. Continue into the publishing and review loop below without asking for a separate confirmation.
+
 ## 10. Synchronize and publish through a pull request
 
-Use this section when the task includes remote delivery. Never push directly to the default or protected branch, never force-push, and never publish unrelated or user-created changes.
+Use this section for every repository-changing task unless the user explicitly opted out. Branch creation, scoped commit creation, feature-branch push, and pull-request creation are the default authorized delivery path; do not wait for the user to request those actions individually. Never push directly to the default or protected branch, never force-push, and never publish unrelated or user-created changes.
 
 1. Confirm the remote, current branch, upstream, and worktree state. Fetch the remote before deciding how to synchronize:
 
@@ -184,10 +188,10 @@ Use this section when the task includes remote delivery. Never push directly to 
    git fetch --prune origin
    ```
 
-2. Work on a task-specific feature branch. Use `git pull --ff-only` only when the current branch already tracks that same remote branch and has no local divergence. If the feature branch is based on an outdated default branch, incorporate the fetched default branch only after confirming the task changes are safely committed and the rebase will not overwrite unrelated work. Prefer `git rebase origin/<default-branch>` for an unpublished or solely owned feature branch. Do not run a blind `git pull`, create an automatic merge commit, or rebase a shared branch.
+2. Confirm the work is on its task-specific feature branch; create it immediately if it was not created during initial inspection. Use `git pull --ff-only` only when the current branch already tracks that same remote branch and has no local divergence. If the feature branch is based on an outdated default branch, incorporate the fetched default branch only after confirming the task changes are safely committed and the rebase will not overwrite unrelated work. Prefer `git rebase origin/<default-branch>` for an unpublished or solely owned feature branch. Do not run a blind `git pull`, create an automatic merge commit, or rebase a shared branch.
 3. Re-run relevant checks after synchronization and resolve conflicts deliberately. Review the resulting diff against the fetched default branch.
 4. Stage only files belonging to the task, inspect the staged diff, and create a focused commit. Do not use broad staging when unrelated changes exist.
-5. Push the feature branch with an explicit upstream, then create or update a pull request. The pull-request body must summarize the change, list exact verification, call out risks or unavailable checks, and link the relevant task.
+5. Push the feature branch with an explicit upstream, then create or update a pull request without pausing for a separate delivery confirmation. The pull-request body must summarize the change, list exact verification, call out risks or unavailable checks, and link the relevant task.
 
    ```bash
    git push --set-upstream origin <feature-branch>
@@ -196,7 +200,7 @@ Use this section when the task includes remote delivery. Never push directly to 
 
 6. Record the branch, commit, pull-request URL, and push outcome in `WORKBENCH_PROGRESS.md`. A successful push is delivery evidence, not completion evidence.
 
-Authentication, a missing remote, a non-fast-forward rejection, branch-protection rejection, or conflicting upstream work requires diagnosis. Do not bypass it with force-push, relaxed protection, or discarded changes.
+Authentication, a missing remote, a non-fast-forward rejection, branch-protection rejection, or conflicting upstream work requires diagnosis and safe retry where practical. Do not bypass it with force-push, relaxed protection, or discarded changes. If access remains unavailable, record the exact blocker and smallest user action; do not misreport local completion as remote delivery.
 
 ## 11. Automated Copilot review and reflection loop
 
