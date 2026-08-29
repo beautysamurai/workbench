@@ -303,10 +303,15 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 | passed | scoped branch/commit review against `origin/main` | Original commit `ac1b895` changed exactly the three workflow Markdown files; unrelated working-tree files remained unstaged and unpublished. |
 | passed | GitHub automated review of `ac1b895` | Completed with no review comments or unresolved threads. |
 | passed | independent workflow-doc audit | Five ambiguities were accepted and corrected: review-loop termination, genuine-blocker scope, dirty-worktree synchronization, CI success semantics, and follow-up-task scope. |
-| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-004 already tracks the verification-baseline repair. |
+| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-003 already tracks the verification-baseline repair. |
 
 **Closeout**
 
-- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-004.
+- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-003.
 - Changelog/docs update: no changelog entry because this is an engineering-process change, not user-visible application behavior.
-- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-004 fixes the baseline and the PR reruns successfully.
+- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-003 fixes the baseline and the PR reruns successfully.
+
+**Automated review follow-up**
+
+- Review of `efac13d` accepted one P2 finding: the published task board calls the verification-baseline task P0-003, while the preserved unpublished P0-002 work renumbers it to P0-004.
+- The pull-request record is corrected to the published P0-003 identifier without staging the unrelated task-board renumbering. The correction commit requires one final automated re-review; its final state will be reported in the pull request and handoff without another evidence-only commit.
