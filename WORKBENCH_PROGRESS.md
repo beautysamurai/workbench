@@ -9,7 +9,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 - **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
-- **Next action:** Publish PR #1's synchronization with repaired `main`, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
+- **Next action:** Publish the accepted task-branch-base review fix on PR #1, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -568,3 +568,33 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Required remote evidence: both push- and pull-request-event workflows plus automated re-review on the synchronized PR #1 head. Their final state belongs in the PR body and handoff without another evidence-only commit.
 - Merge of PR #1 remains separately authorized and was not performed.
 - Blocker: none established while synchronization, CI, and review remain actionable.
+
+### 2026-08-30 00:00 JST — P2-003 accepted the final task-branch-base review finding
+
+**Remote evidence and finding**
+
+- Synchronized PR #1 head `8f9a5e43aba9ef7461d1f953126e50e89a1b4649` passed both workflow events: push run `33258900970` and pull-request run `33258902380`.
+- Push Linux job `99117332254` and pull-request Linux job `99117336318` each selected the full nine-file Linux/WSL inventory and passed 24 of 24 tests.
+- Both Windows jobs passed 22 of 22 portable tests and built NSIS with `electron-builder --win nsis --publish never`; neither log contains the prior implicit-publication or missing-`GH_TOKEN` error.
+- Push artifact `9716678952` was uploaded at 110,921,346 bytes with digest `sha256:1f1c308d04fc86a2ac204218f212cf7f96b0a8a1187d4f276f0f969bacfc2876`; pull-request artifact `9716685571` was uploaded at 110,921,375 bytes with digest `sha256:111d15da8e98c25d1523b0f49b93d7378872ca9e06a4b5509871c1a6f1d5cdb1`.
+- Automated Codex re-review completed on `8f9a5e4` and opened one new P2 thread: creating a new task branch from an arbitrary current feature branch can inherit the prior task's commits even after a later rebase onto the default branch.
+
+**Disposition and change**
+
+- Accepted. Fetching the default branch did not by itself select it as the new branch's base.
+- `AGENTS.md` and `CODEX_WORKFLOW.md` now require each new task branch to start explicitly from the fetched default branch without tracking it. When preserved work or prior-task commits make the current checkout unsuitable, the workflow preserves any existing index, transfers only audited commit SHAs or a reviewed binary-capable scoped patch plus explicitly inventoried task-owned untracked files, and creates a fresh clean auxiliary delivery branch from `origin/<default-branch>` without deleting or resetting the unsuitable branch.
+- Published branches now merge an updated default branch deliberately instead of rebasing and requiring a forbidden force-push. Before publication, explicit commit and path audits against the fetched default detect inherited work.
+- If an existing pull request is tied to a contaminated branch that cannot advance safely, the workflow opens and cross-links a replacement from the clean delivery branch instead of force-resetting the old head.
+- `REVIEW_CHECKLIST.md` now verifies the branch base, commit ancestry, changed paths, and absence of inherited work from another task.
+- Files changed for this review fix: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this append-only progress entry. No changelog entry was added because this is engineering-process documentation.
+
+**Verification and remaining action**
+
+- Manual cross-reference review confirms initial setup, staged-index preservation, already-committed and uncommitted recovery (including binary and untracked task files), fresh no-track delivery branches, replacement-PR handling, unpublished-rebase versus published-merge synchronization, ancestry/path auditing, and review-checklist language use the same fetched-default branch contract.
+- `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including the WSL integration suite; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`.
+- `git diff --check origin/main` passes for the complete review-fix worktree diff.
+- The complete PR diff remains limited to the same four Markdown files; no application, test, package, setup, or workflow file is changed relative to `main`.
+- Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
+- Merge of PR #1 remains separately authorized and was not performed.
+- Blocker: none established while the review fix and final verification remain actionable.

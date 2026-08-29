@@ -34,7 +34,7 @@ Also inspect `package.json`, its lockfile, README files, TypeScript and Electron
 - Never claim an unrun, skipped, or unavailable check passed.
 - Do not add telemetry, install system-wide software, force-push, rewrite shared history, or make destructive Git changes unless the user explicitly requests it.
 - For every task that changes the repository, remote delivery is in scope by default unless the user explicitly opts out. The absence of a branch, commit, push, or pull-request request is not an opt-out and does not require a separate confirmation.
-- Cut a task-specific feature branch before the first edit when safe. If work already began on the default branch, create the feature branch at the next safe opportunity without discarding or stashing unrelated work. Commit and push only the task's scoped changes after local verification; never include unrelated or user-created changes, and never push directly to the default/protected branch.
+- Before the first edit when safe, cut a task-specific feature branch from the fetched default branch without configuring it to track the default branch; never base a new task branch on an arbitrary current feature branch. If task work already exists on an unsuitable checkout, preserve any pre-existing staged state and transfer only audited task commits, a reviewed binary-capable task patch, and explicitly inventoried task-owned untracked files into a clean auxiliary worktree based on the fetched default branch. Use a fresh delivery-branch name rather than deleting, resetting, or force-updating an unsuitable branch. Before publishing, audit both the commits and paths relative to the fetched default. Commit and push only the task's scoped changes after local verification; never include unrelated or user-created changes, and never push directly to the default/protected branch.
 - Complete the pull-request, CI, Copilot review, reflection, and re-review loop automatically. If a genuine blocker remains after safe diagnosis and required approval attempts, stop after the local closeout and report the smallest required user action.
 
 ## Standard operating loop
@@ -48,7 +48,7 @@ Also inspect `package.json`, its lockfile, README files, TypeScript and Electron
 7. Smoke-test the affected user journey, including a failure path.
 8. Review the final diff for accidental changes and security regressions.
 9. Update `TASKS.md`, append to `WORKBENCH_PROGRESS.md`, and add user-visible completed changes to `CHANGELOG.md`.
-10. Unless the user explicitly opted out, follow the pull/rebase, feature-branch push, pull-request, CI/Copilot review, reflection, and re-review loop in `CODEX_WORKFLOW.md` without asking for a separate delivery confirmation.
+10. Unless the user explicitly opted out, follow the fetch/synchronization, feature-branch push, pull-request, CI/Copilot review, reflection, and re-review loop in `CODEX_WORKFLOW.md` without asking for a separate delivery confirmation.
 
 Follow `CODEX_WORKFLOW.md` for the operational detail.
 

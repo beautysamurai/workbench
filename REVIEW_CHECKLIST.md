@@ -5,8 +5,10 @@ Use the relevant sections after the application has a reproducible baseline. Rec
 ## Pull request delivery and reflection
 
 - [ ] Remote delivery ran by default, or an explicit user opt-out/genuine blocker is recorded; lack of a separate push/PR request was not treated as an opt-out.
-- [ ] The task-specific feature branch was created before the first edit, or the record explains why it was cut at the next safe opportunity.
+- [ ] The task-specific feature branch was created from the fetched default branch (or in a clean auxiliary worktree based there) and contains no commits inherited from another task.
+- [ ] Any recovery preserved the existing index, transferred only audited commit SHAs or a reviewed binary-capable scoped patch plus explicitly inventoried task-owned untracked files, and used a fresh delivery branch rather than resetting an unsuitable branch.
 - [ ] The feature branch was synchronized with the fetched default branch without overwriting unrelated work.
+- [ ] `git log origin/<default>..HEAD` and `git diff origin/<default>...HEAD` show only the current task's commits (plus any deliberate synchronization merge) and paths.
 - [ ] Only task-scoped changes were staged, committed, and pushed; the default/protected branch was not pushed directly.
 - [ ] The pull request states the behavior change, exact verification, unavailable checks, risks, and task reference.
 - [ ] Required CI passed; any pending or failed required check is recorded accurately and leaves delivery incomplete.
