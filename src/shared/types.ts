@@ -34,6 +34,8 @@ export interface Workspace {
   root: string;
   commands: WorkspaceCommand[];
   contextItems: ContextItem[];
+  codexModel: string | null;
+  codexEffort: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +49,75 @@ export interface WorkspaceDraft {
   root: string;
   commands?: WorkspaceCommand[];
   contextItems?: ContextItem[];
+  codexModel?: string | null;
+  codexEffort?: string | null;
+}
+
+export interface CodexReasoningEffortOption {
+  reasoningEffort: string;
+  description: string;
+}
+
+export interface CodexModelInfo {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  supportedReasoningEfforts: CodexReasoningEffortOption[];
+  defaultReasoningEffort: string;
+  isDefault: boolean;
+}
+
+export interface CodexModelList {
+  data: CodexModelInfo[];
+  nextCursor?: string | null;
+}
+
+export interface CodexRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface CodexRateLimitSnapshot {
+  limitId: string | null;
+  limitName: string | null;
+  primary: CodexRateLimitWindow | null;
+  secondary: CodexRateLimitWindow | null;
+  planType?: string | null;
+  rateLimitReachedType?: string | null;
+}
+
+export interface CodexRateLimits {
+  rateLimits: CodexRateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
+}
+
+export type ProjectTaskState = 'pending' | 'in progress' | 'blocked' | 'done';
+
+export interface ProjectTask {
+  id: string;
+  title: string;
+  state: ProjectTaskState;
+  objective: string;
+}
+
+export interface ProjectSystemFile {
+  name: 'AGENTS.md' | 'TASKS.md' | 'WORKBENCH_PROGRESS.md';
+  exists: boolean;
+  safe: boolean;
+}
+
+export interface ProjectSystemStatus {
+  files: ProjectSystemFile[];
+  tasks: ProjectTask[];
+  ready: boolean;
+}
+
+export interface ProjectTaskDraft {
+  title: string;
+  objective?: string;
 }
 
 export interface WorkbenchSettings {
@@ -156,11 +227,17 @@ export interface WorkbenchApi {
   state: {
     get(): Promise<PersistedState>;
     saveWorkspace(draft: WorkspaceDraft): Promise<PersistedState>;
+    saveCodexPreferences(workspaceId: string, model: string | null, effort: string | null): Promise<PersistedState>;
     deleteWorkspace(workspaceId: string): Promise<PersistedState>;
     selectWorkspace(workspaceId: string | null): Promise<PersistedState>;
     saveSettings(settings: WorkbenchSettings): Promise<PersistedState>;
     addContextItem(workspaceId: string, item: Omit<ContextItem, 'id'>): Promise<PersistedState>;
     removeContextItem(workspaceId: string, itemId: string): Promise<PersistedState>;
+  };
+  project: {
+    inspect(workspaceId: string): Promise<ProjectSystemStatus>;
+    initialize(workspaceId: string): Promise<ProjectSystemStatus>;
+    addTask(workspaceId: string, task: ProjectTaskDraft): Promise<ProjectSystemStatus>;
   };
   system: {
     inspect(): Promise<SystemInspection>;
@@ -176,6 +253,8 @@ export interface WorkbenchApi {
   };
   codex: {
     connect(workspaceId: string): Promise<ActionResult>;
+    listModels(workspaceId: string): Promise<CodexModelList>;
+    getRateLimits(workspaceId: string): Promise<CodexRateLimits>;
     listThreads(workspaceId: string): Promise<{ data: CodexThreadSummary[]; nextCursor?: string | null }>;
     startThread(workspaceId: string): Promise<Record<string, unknown>>;
     resumeThread(workspaceId: string, threadId: string): Promise<Record<string, unknown>>;

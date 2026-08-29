@@ -18,11 +18,18 @@ const api: WorkbenchApi = {
   state: {
     get: () => ipcRenderer.invoke('state:get'),
     saveWorkspace: (draft) => ipcRenderer.invoke('state:save-workspace', draft),
+    saveCodexPreferences: (workspaceId, model, effort) =>
+      ipcRenderer.invoke('state:save-codex-preferences', workspaceId, model, effort),
     deleteWorkspace: (workspaceId) => ipcRenderer.invoke('state:delete-workspace', workspaceId),
     selectWorkspace: (workspaceId) => ipcRenderer.invoke('state:select-workspace', workspaceId),
     saveSettings: (settings) => ipcRenderer.invoke('state:save-settings', settings),
     addContextItem: (workspaceId, item) => ipcRenderer.invoke('state:add-context-item', workspaceId, item),
     removeContextItem: (workspaceId, itemId) => ipcRenderer.invoke('state:remove-context-item', workspaceId, itemId),
+  },
+  project: {
+    inspect: (workspaceId) => ipcRenderer.invoke('project:inspect', workspaceId),
+    initialize: (workspaceId) => ipcRenderer.invoke('project:initialize', workspaceId),
+    addTask: (workspaceId, task) => ipcRenderer.invoke('project:add-task', workspaceId, task),
   },
   system: {
     inspect: () => ipcRenderer.invoke('system:inspect'),
@@ -38,6 +45,8 @@ const api: WorkbenchApi = {
   },
   codex: {
     connect: (workspaceId) => ipcRenderer.invoke('codex:connect', workspaceId),
+    listModels: (workspaceId) => ipcRenderer.invoke('codex:list-models', workspaceId),
+    getRateLimits: (workspaceId) => ipcRenderer.invoke('codex:rate-limits', workspaceId),
     listThreads: (workspaceId) => ipcRenderer.invoke('codex:list-threads', workspaceId),
     startThread: (workspaceId) => ipcRenderer.invoke('codex:start-thread', workspaceId),
     resumeThread: (workspaceId, threadId) => ipcRenderer.invoke('codex:resume-thread', workspaceId, threadId),

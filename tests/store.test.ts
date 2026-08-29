@@ -36,6 +36,17 @@ test('persists a validated workspace and reloads it', () => {
     const reloaded = new WorkbenchStore(stateFile).getState();
     assert.equal(reloaded.selectedWorkspaceId, saved.workspaces[0].id);
     assert.equal(reloaded.workspaces[0].distro, 'Ubuntu');
+
+    const preferred = store.saveCodexPreferences(
+      saved.workspaces[0].id,
+      'gpt-5.6-terra',
+      'high',
+    );
+    assert.equal(preferred.workspaces[0].codexModel, 'gpt-5.6-terra');
+    assert.equal(preferred.workspaces[0].codexEffort, 'high');
+    const preferencesReloaded = new WorkbenchStore(stateFile).getState();
+    assert.equal(preferencesReloaded.workspaces[0].codexModel, 'gpt-5.6-terra');
+    assert.equal(preferencesReloaded.workspaces[0].codexEffort, 'high');
   });
 });
 

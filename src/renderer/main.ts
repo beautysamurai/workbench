@@ -2,12 +2,16 @@ import type {
   ActionResult,
   CodexConnectionStatus,
   CodexEventEnvelope,
+  CodexModelInfo,
+  CodexRateLimits,
   CodexServerRequestEnvelope,
   CodexThreadSummary,
   ContextBuildResult,
   ContextItem,
   GitStatus,
   PersistedState,
+  ProjectSystemStatus,
+  ProjectTask,
   SystemInspection,
   TerminalSessionInfo,
   WorkbenchApi,
@@ -17,6 +21,16 @@ import type {
   WorkspaceIcon,
 } from '../shared/types.js';
 import { icon } from './icons.js';
+import {
+  shouldShowCodexItemInTranscript,
+  shouldShowCodexNotificationInTranscript,
+} from './codex-transcript.js';
+import {
+  chooseCodexModelPreference,
+  primaryRateLimit,
+  rateLimitsFromNotification,
+  remainingUsagePercent,
+} from './codex-metadata.js';
 import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
 import { TerminalBuffer } from './terminal-buffer.js';
@@ -30,7 +44,7 @@ type ModalState =
   | { kind: 'delete'; workspaceId: string }
   | null;
 
-type CodexEntryType = 'user' | 'agent' | 'reasoning' | 'command' | 'file' | 'review' | 'system';
+type CodexEntryType = 'user' | 'agent' | 'command' | 'file' | 'review' | 'system';
 
 interface CodexEntry {
   id: string;
@@ -83,6 +97,12 @@ interface UiState {
   paletteQuery: string;
   paletteIndex: number;
   codexStatus: Map<string, CodexConnectionStatus>;
+  codexModels: Map<string, CodexModelInfo[]>;
+  codexMetadataLoading: Set<string>;
+  codexMetadataErrors: Map<string, string>;
+  rateLimits: Map<string, CodexRateLimits>;
+  projectSystems: Map<string, ProjectSystemStatus>;
+  projectLoading: Set<string>;
   threadLists: Map<string, CodexThreadSummary[]>;
   threadsLoading: Set<string>;
   activeThread: Map<string, string>;
@@ -117,6 +137,12 @@ const ui: UiState = {
   paletteQuery: '',
   paletteIndex: 0,
   codexStatus: new Map(),
+  codexModels: new Map(),
+  codexMetadataLoading: new Set(),
+  codexMetadataErrors: new Map(),
+  rateLimits: new Map(),
+  projectSystems: new Map(),
+  projectLoading: new Set(),
   threadLists: new Map(),
   threadsLoading: new Set(),
   activeThread: new Map(),
@@ -372,6 +398,10 @@ function renderOverview(workspace: Workspace): string {
     ? git.clean ? 'Working tree clean' : `${git.changed + git.staged + git.untracked} pending changes`
     : git?.error ?? 'Git status unavailable';
   const codexState = ui.codexStatus.get(workspace.distro)?.state ?? (distro?.codexVersion ? 'ready' : 'missing');
+  const remaining = remainingUsagePercent(ui.rateLimits.get(workspace.distro));
+  const usageValue = remaining === null
+    ? ui.codexMetadataLoading.has(workspace.distro) ? 'Loading…' : 'Unavailable'
+    : `${remaining}% left`;
 
   const commands = workspace.commands.length
     ? workspace.commands.map((command) => renderActionRow(command)).join('')
@@ -408,6 +438,7 @@ function renderOverview(workspace: Workspace): string {
         ${renderMetric('terminal', `${terminalCount} open`, terminalCount === 1 ? 'Active terminal session' : 'Active terminal sessions')}
         ${renderMetric('context', `${workspace.contextItems.length} items`, 'Files, notes, and links')}
         ${renderMetric('sparkle', codexState === 'connected' ? 'Connected' : distro?.codexVersion ?? 'Not detected', `Codex · ${workspace.distro}`)}
+        ${renderMetric('chart', usageValue, 'Codex primary usage limit')}
       </section>
 
       <div class="section-heading"><div><h3>Run and continue</h3><p>Deterministic commands and recent agent work</p></div></div>
@@ -421,7 +452,52 @@ function renderOverview(workspace: Workspace): string {
           <div class="thread-preview-list">${threadPreview}</div>
         </article>
       </section>
+      ${renderProjectPanel(workspace)}
     </div>`;
+}
+
+function renderProjectPanel(workspace: Workspace): string {
+  const status = ui.projectSystems.get(workspace.id);
+  const loading = ui.projectLoading.has(workspace.id);
+  const files = status?.files.map((file) => `
+    <span class="project-file ${file.exists && file.safe ? 'is-ready' : 'is-missing'}">
+      ${icon(file.exists && file.safe ? 'check' : 'alert', 11)} ${escapeHtml(file.name)}
+    </span>`).join('') ?? '';
+  const tasks = status?.tasks ?? [];
+  const taskRows = tasks.length
+    ? tasks.slice(0, 10).map(renderProjectTask).join('')
+    : `<div class="empty-inline">No queued tasks yet. Add one here instead of editing TASKS.md.</div>`;
+  const unsafeFile = status?.files.find((file) => file.exists && !file.safe);
+
+  return `
+    <section class="project-panel panel-card">
+      <div class="panel-heading">
+        <div><h3>Project task queue</h3><span>Markdown-backed workflow in ${escapeHtml(workspace.root)}</span></div>
+        <button class="button small ghost" data-action="refresh-project" ${loading ? 'disabled' : ''}>${icon('refresh', 12)} ${loading ? 'Checking…' : 'Refresh'}</button>
+      </div>
+      ${status ? `<div class="project-file-row">${files}</div>` : `<div class="empty-inline">${loading ? 'Inspecting project files…' : 'Project files have not been inspected.'}</div>`}
+      ${unsafeFile ? `<div class="project-warning">${icon('alert', 13)} ${escapeHtml(unsafeFile.name)} resolves outside this workspace. Workbench will not modify it.</div>` : ''}
+      ${status && !status.ready && !unsafeFile ? `<div class="project-setup"><p>Create the missing Markdown project guide, task queue, and progress log without replacing existing files.</p><button class="button small primary" data-action="initialize-project" ${loading ? 'disabled' : ''}>${icon('plus', 12)} Set up project files</button></div>` : ''}
+      <div class="project-task-layout">
+        <form class="task-compose" id="project-task-form">
+          <label for="project-task-title">Add a task</label>
+          <input id="project-task-title" name="title" required maxlength="180" placeholder="What should Codex accomplish?" />
+          <textarea name="objective" maxlength="500" placeholder="Optional outcome or acceptance detail"></textarea>
+          <button class="button small primary" type="submit" ${loading || Boolean(unsafeFile) ? 'disabled' : ''}>${icon('plus', 12)} Add to queue</button>
+        </form>
+        <div class="project-task-list">${taskRows}</div>
+      </div>
+    </section>`;
+}
+
+function renderProjectTask(task: ProjectTask): string {
+  const prompt = task.objective || task.title;
+  return `
+    <article class="project-task-row">
+      <span class="task-state state-${escapeHtml(task.state.replace(/\s+/g, '-'))}">${escapeHtml(task.state)}</span>
+      <span class="project-task-copy"><strong>${escapeHtml(task.id)} · ${escapeHtml(task.title)}</strong><small>${escapeHtml(prompt)}</small></span>
+      ${task.state === 'done' ? '' : `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}">Send to Codex</button>`}
+    </article>`;
 }
 
 function renderMetric(iconName: string, value: string, label: string, status = ''): string {
@@ -561,14 +637,49 @@ function renderThreadSkeletons(): string {
 function renderCodexLanding(workspace: Workspace, status?: CodexConnectionStatus): string {
   const connecting = status?.state === 'connecting' || ui.busyActions.has('codex-connect');
   return `
-    <div class="empty-state">
-      <div class="empty-state-card">
-        <div class="empty-state-icon">${icon('sparkle', 31)}</div>
-        <h2>Codex, inside your workspace.</h2>
-        <p>Start a project thread with <code>${escapeHtml(workspace.root)}</code> as its working directory. Workbench streams plans, commands, diffs, reviews, and approval requests directly from Codex.</p>
-        <button class="button primary" data-action="new-thread" ${connecting ? 'disabled' : ''}>${icon('plus', 15)} ${connecting ? 'Connecting…' : 'Start a Codex thread'}</button>
+    <div class="codex-landing">
+      ${renderCodexControls(workspace)}
+      <div class="empty-state">
+        <div class="empty-state-card">
+          <div class="empty-state-icon">${icon('sparkle', 31)}</div>
+          <h2>Codex, inside your workspace.</h2>
+          <p>Start a project thread with <code>${escapeHtml(workspace.root)}</code> as its working directory. Workbench streams plans, commands, diffs, reviews, and approval requests directly from Codex.</p>
+          <button class="button primary" data-action="new-thread" ${connecting ? 'disabled' : ''}>${icon('plus', 15)} ${connecting ? 'Connecting…' : 'Start a Codex thread'}</button>
+        </div>
       </div>
     </div>`;
+}
+
+function renderCodexControls(workspace: Workspace): string {
+  const models = ui.codexModels.get(workspace.distro) ?? [];
+  const preference = chooseCodexModelPreference(models, workspace);
+  const selected = models.find((model) => model.model === preference.model);
+  const efforts = selected?.supportedReasoningEfforts ?? [];
+  const loading = ui.codexMetadataLoading.has(workspace.distro);
+  const error = ui.codexMetadataErrors.get(workspace.distro);
+  const remaining = remainingUsagePercent(ui.rateLimits.get(workspace.distro));
+  const reset = primaryRateLimit(ui.rateLimits.get(workspace.distro))?.primary?.resetsAt;
+  const usage = remaining === null ? (loading ? 'Loading usage…' : 'Usage unavailable') : `${remaining}% remaining`;
+  const modelOptions = models.map((model) => `<option value="${escapeHtml(model.model)}" ${model.model === preference.model ? 'selected' : ''}>${escapeHtml(model.displayName || model.model)}</option>`).join('');
+  const effortOptions = efforts.map((option) => `<option value="${escapeHtml(option.reasoningEffort)}" ${option.reasoningEffort === preference.effort ? 'selected' : ''}>${escapeHtml(titleCase(option.reasoningEffort))}</option>`).join('');
+
+  return `
+    <div class="codex-config-bar">
+      <label class="codex-selector"><span>Model</span><select data-codex-setting="model" aria-label="Codex model" ${!models.length || loading ? 'disabled' : ''}>${modelOptions || '<option>Unavailable</option>'}</select></label>
+      <label class="codex-selector"><span>Reasoning</span><select data-codex-setting="effort" aria-label="Reasoning effort" ${!efforts.length || loading ? 'disabled' : ''}>${effortOptions || '<option>Default</option>'}</select></label>
+      <div class="codex-usage" title="Codex primary usage window">${icon('chart', 13)}<span><strong>${escapeHtml(usage)}</strong>${reset ? `<small>Resets ${escapeHtml(formatResetTime(reset))}</small>` : ''}</span></div>
+      ${error ? `<span class="codex-metadata-error" title="${escapeHtml(error)}">${icon('alert', 12)} Metadata unavailable</span>` : ''}
+      <button class="icon-button" data-action="refresh-codex-metadata" title="Refresh models and usage" ${loading ? 'disabled' : ''}>${icon('refresh', 13)}</button>
+    </div>`;
+}
+
+function titleCase(value: string): string {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+}
+
+function formatResetTime(timestampSeconds: number): string {
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    .format(new Date(timestampSeconds * 1_000));
 }
 
 function renderConversation(
@@ -599,6 +710,7 @@ function renderConversation(
         <button class="icon-button" data-action="archive-thread" title="Archive thread">${icon('archive', 14)}</button>
       </div>
     </div>
+    ${renderCodexControls(workspace)}
     <div class="message-scroll" id="message-scroll">
       <div class="message-list">
         ${entries || `<div class="empty-inline">Ask Codex to inspect, implement, test, explain, or review something in this workspace.</div>`}
@@ -644,9 +756,8 @@ function renderCodexEntry(entry: CodexEntry): string {
     return `<div class="status-chip">${icon('alert', 11)} ${escapeHtml(entry.text)}</div>`;
   }
   const isUser = entry.type === 'user';
-  const isReasoning = entry.type === 'reasoning';
   const isReview = entry.type === 'review';
-  const role = isUser ? 'You' : isReview ? 'Codex review' : isReasoning ? 'Codex reasoning' : 'Codex';
+  const role = isUser ? 'You' : isReview ? 'Codex review' : 'Codex';
   const avatar = isUser ? 'message' : isReview ? 'review' : 'sparkle';
   return `
     <article class="message ${isUser ? 'user' : 'agent'}">
@@ -798,6 +909,7 @@ function renderWorkspaceModal(workspaceId?: string): string {
         <div class="form-field full"><span class="field-label">Icon</span><div class="icon-picker">${icons.map((candidate) => `<button type="button" class="icon-choice ${candidate === (existing?.icon ?? 'code') ? 'is-active' : ''}" data-action="choose-workspace-icon" data-icon="${candidate}">${icon(candidate, 17)}</button>`).join('')}</div></div>
         <div class="form-field"><label for="workspace-distro">WSL distribution</label><select id="workspace-distro" name="distro" required>${distroOptions || `<option value="${escapeHtml(defaultDistro)}">${escapeHtml(defaultDistro || 'Ubuntu')}</option>`}</select></div>
         <div class="form-field"><label for="workspace-root">Linux project root</label><input id="workspace-root" name="root" required value="${escapeHtml(existing?.root ?? '')}" placeholder="${escapeHtml(`${defaultHome}/projects/my-project`)}" /><small>Use an absolute WSL path. Context files are restricted to this root.</small></div>
+        ${existing ? '' : `<div class="form-field full"><label class="checkbox-row"><input type="checkbox" name="initializeProject" checked /><span class="checkbox-copy"><strong>Set up the Markdown project workflow</strong><span>Create missing AGENTS.md, TASKS.md, and WORKBENCH_PROGRESS.md files. Existing files are never replaced.</span></span></label></div>`}
         <div class="form-field full"><label for="workspace-commands">Quick commands</label><textarea id="workspace-commands" name="commands" spellcheck="false" placeholder="Run tests :: ./gradlew test :: Complete test suite\nStart app :: ./gradlew bootRun">${escapeHtml(commands)}</textarea><div class="commands-help">One command per line: Name :: shell command :: optional description</div></div>
       </div>
     </form>`;
@@ -940,7 +1052,11 @@ async function loadInitialState(): Promise<void> {
   }).catch((error) => toast(errorMessage(error), 'error'));
 
   const workspace = currentWorkspace();
-  if (workspace) void refreshGit(workspace);
+  if (workspace) {
+    void refreshGit(workspace);
+    void ensureProjectSystem(workspace);
+    void ensureCodexMetadata(workspace);
+  }
 }
 
 async function refreshGit(workspace: Workspace): Promise<void> {
@@ -955,6 +1071,131 @@ async function refreshGit(workspace: Workspace): Promise<void> {
     ui.gitLoading.delete(workspace.id);
     renderAll({ preserveFocus: true });
   }
+}
+
+async function ensureCodexMetadata(workspace: Workspace, force = false): Promise<void> {
+  if (ui.codexMetadataLoading.has(workspace.distro)) return;
+  if (!force && ui.codexModels.has(workspace.distro) && ui.rateLimits.has(workspace.distro)) {
+    const preference = chooseCodexModelPreference(ui.codexModels.get(workspace.distro) ?? [], workspace);
+    if (preference.model !== workspace.codexModel || preference.effort !== workspace.codexEffort) {
+      try {
+        ui.data = await api.state.saveCodexPreferences(workspace.id, preference.model, preference.effort);
+        renderAll({ preserveFocus: true });
+      } catch (error) {
+        ui.codexMetadataErrors.set(workspace.distro, errorMessage(error));
+      }
+    }
+    return;
+  }
+  ui.codexMetadataLoading.add(workspace.distro);
+  ui.codexMetadataErrors.delete(workspace.distro);
+  renderAll({ preserveFocus: true });
+  try {
+    await api.codex.connect(workspace.id);
+    const [modelsResult, limitsResult] = await Promise.allSettled([
+      api.codex.listModels(workspace.id),
+      api.codex.getRateLimits(workspace.id),
+    ]);
+    const failures: string[] = [];
+    if (modelsResult.status === 'fulfilled') {
+      const models = modelsResult.value.data.filter((model) => !model.hidden);
+      ui.codexModels.set(workspace.distro, models);
+      const preference = chooseCodexModelPreference(models, workspace);
+      if (preference.model !== workspace.codexModel || preference.effort !== workspace.codexEffort) {
+        ui.data = await api.state.saveCodexPreferences(workspace.id, preference.model, preference.effort);
+      }
+    } else {
+      failures.push(errorMessage(modelsResult.reason));
+    }
+    if (limitsResult.status === 'fulfilled') ui.rateLimits.set(workspace.distro, limitsResult.value);
+    else failures.push(errorMessage(limitsResult.reason));
+    if (failures.length) ui.codexMetadataErrors.set(workspace.distro, failures.join(' · '));
+  } catch (error) {
+    ui.codexMetadataErrors.set(workspace.distro, errorMessage(error));
+  } finally {
+    ui.codexMetadataLoading.delete(workspace.distro);
+    renderAll({ preserveFocus: true });
+  }
+}
+
+async function ensureProjectSystem(workspace: Workspace, force = false, notifyFailure = false): Promise<void> {
+  if (ui.projectLoading.has(workspace.id)) return;
+  if (!force && ui.projectSystems.has(workspace.id)) return;
+  ui.projectLoading.add(workspace.id);
+  renderAll({ preserveFocus: true });
+  try {
+    ui.projectSystems.set(workspace.id, await api.project.inspect(workspace.id));
+  } catch (error) {
+    if (notifyFailure) toast(errorMessage(error), 'error');
+  } finally {
+    ui.projectLoading.delete(workspace.id);
+    renderAll({ preserveFocus: true });
+  }
+}
+
+async function initializeProject(workspace: Workspace): Promise<void> {
+  ui.projectLoading.add(workspace.id);
+  renderAll({ preserveFocus: true });
+  try {
+    ui.projectSystems.set(workspace.id, await api.project.initialize(workspace.id));
+    toast('Missing project Markdown files created.');
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+  } finally {
+    ui.projectLoading.delete(workspace.id);
+    renderAll({ preserveFocus: true });
+  }
+}
+
+async function submitProjectTask(): Promise<void> {
+  const workspace = currentWorkspace();
+  const form = document.querySelector<HTMLFormElement>('#project-task-form');
+  if (!workspace || !form || !form.reportValidity()) return;
+  const data = new FormData(form);
+  ui.projectLoading.add(workspace.id);
+  renderAll({ preserveFocus: true });
+  try {
+    ui.projectSystems.set(workspace.id, await api.project.addTask(workspace.id, {
+      title: String(data.get('title') ?? ''),
+      objective: String(data.get('objective') ?? ''),
+    }));
+    renderAll({ preserveFocus: true });
+    toast('Task added to TASKS.md.');
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+  } finally {
+    ui.projectLoading.delete(workspace.id);
+    renderAll({ preserveFocus: true });
+  }
+}
+
+async function saveCodexSetting(workspace: Workspace, setting: 'model' | 'effort', value: string): Promise<void> {
+  const models = ui.codexModels.get(workspace.distro) ?? [];
+  const model = setting === 'model' ? value : workspace.codexModel;
+  const selected = models.find((candidate) => candidate.model === model);
+  const effort = setting === 'model'
+    ? selected?.defaultReasoningEffort ?? selected?.supportedReasoningEfforts[0]?.reasoningEffort ?? null
+    : value;
+  try {
+    ui.data = await api.state.saveCodexPreferences(workspace.id, model || null, effort || null);
+    renderAll({ preserveFocus: true });
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+  }
+}
+
+async function offerProjectTask(workspace: Workspace, taskId: string): Promise<void> {
+  const task = ui.projectSystems.get(workspace.id)?.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  ui.activeTab = 'codex';
+  renderAll();
+  await Promise.all([ensureCodexMetadata(workspace), ensureThreads(workspace)]);
+  if (!ui.activeThread.get(workspace.id)) await startNewThread(workspace);
+  const threadId = ui.activeThread.get(workspace.id);
+  if (!threadId) return;
+  ui.composerText.set(threadId, `Work on ${task.id} — ${task.title}. ${task.objective}`.trim());
+  renderAll({ preserveFocus: true });
+  window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('#codex-composer')?.focus(), 0);
 }
 
 async function ensureThreads(workspace: Workspace, force = false): Promise<void> {
@@ -1015,6 +1256,7 @@ function deduplicateEntries(entries: CodexEntry[]): CodexEntry[] {
 }
 
 function normalizeCodexItem(item: Record<string, unknown>): CodexEntry | null {
+  if (!shouldShowCodexItemInTranscript(item)) return null;
   const type = stringValue(item.type);
   const id = stringValue(item.id, `${type || 'item'}-${Date.now()}-${Math.random()}`);
   if (type === 'userMessage') {
@@ -1022,9 +1264,6 @@ function normalizeCodexItem(item: Record<string, unknown>): CodexEntry | null {
   }
   if (type === 'agentMessage') {
     return { id, type: 'agent', text: stringValue(item.text), phase: stringValue(item.phase) };
-  }
-  if (type === 'reasoning') {
-    return { id, type: 'reasoning', text: reasoningSummary(item) };
   }
   if (type === 'commandExecution') {
     const commandValue = item.command ?? item.argv;
@@ -1076,15 +1315,6 @@ function contentText(value: unknown): string {
   }).filter(Boolean).join('\n');
 }
 
-function reasoningSummary(item: Record<string, unknown>): string {
-  const summary = item.summary;
-  if (typeof summary === 'string') return summary;
-  return asArray(summary).map((part) => {
-    if (typeof part === 'string') return part;
-    return stringValue(asRecord(part).text);
-  }).filter(Boolean).join('\n');
-}
-
 function findThreadId(event: CodexEventEnvelope): string | null {
   const direct = stringValue(event.params.threadId);
   if (direct) return direct;
@@ -1119,6 +1349,13 @@ function reconcileUserEntry(view: ThreadViewState, entry: CodexEntry): CodexEntr
 
 function handleCodexEvent(event: CodexEventEnvelope): void {
   const method = event.method;
+  if (method === 'account/rateLimits/updated') {
+    const limits = rateLimitsFromNotification(event.params);
+    if (limits) ui.rateLimits.set(event.distro, limits);
+    renderAll({ preserveFocus: true });
+    return;
+  }
+  if (!shouldShowCodexNotificationInTranscript(method)) return;
   const threadId = findThreadId(event);
 
   if (method === 'thread/started') {
@@ -1191,11 +1428,6 @@ function handleCodexEvent(event: CodexEventEnvelope): void {
     const itemId = stringValue(event.params.itemId, `agent-${view.activeTurnId ?? Date.now()}`);
     const entry = view.entries.find((candidate) => candidate.id === itemId)
       ?? upsertEntry(view, { id: itemId, type: 'agent', text: '' });
-    entry.text += stringValue(event.params.delta);
-  } else if (method === 'item/reasoning/summaryTextDelta') {
-    const itemId = stringValue(event.params.itemId, `reasoning-${view.activeTurnId ?? Date.now()}`);
-    const entry = view.entries.find((candidate) => candidate.id === itemId)
-      ?? upsertEntry(view, { id: itemId, type: 'reasoning', text: '' });
     entry.text += stringValue(event.params.delta);
   } else if (method === 'item/commandExecution/outputDelta') {
     const itemId = stringValue(event.params.itemId, `command-${view.activeTurnId ?? Date.now()}`);
@@ -1290,6 +1522,16 @@ document.addEventListener('input', (event) => {
   }
 });
 
+document.addEventListener('change', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) return;
+  const setting = target.dataset.codexSetting;
+  const workspace = currentWorkspace();
+  if (workspace && (setting === 'model' || setting === 'effort')) {
+    void saveCodexSetting(workspace, setting, target.value);
+  }
+});
+
 document.addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.target;
@@ -1299,6 +1541,7 @@ document.addEventListener('submit', (event) => {
   if (form.id === 'workspace-form') void submitWorkspaceForm();
   if (form.id === 'settings-form') void submitSettingsForm();
   if (form.id === 'context-form') void submitContextForm();
+  if (form.id === 'project-task-form') void submitProjectTask();
 });
 
 document.addEventListener('keydown', (event) => {
@@ -1394,8 +1637,25 @@ async function executeAction(actionName: string, element: HTMLElement): Promise<
       break;
     case 'refresh-workspace':
       if (workspace) {
-        await Promise.all([refreshGit(workspace), ui.threadLists.has(workspace.id) ? ensureThreads(workspace, true) : Promise.resolve()]);
+        await Promise.all([
+          refreshGit(workspace),
+          ensureProjectSystem(workspace, true, true),
+          ensureCodexMetadata(workspace, true),
+          ui.threadLists.has(workspace.id) ? ensureThreads(workspace, true) : Promise.resolve(),
+        ]);
       }
+      break;
+    case 'refresh-project':
+      if (workspace) await ensureProjectSystem(workspace, true, true);
+      break;
+    case 'initialize-project':
+      if (workspace) await initializeProject(workspace);
+      break;
+    case 'offer-project-task':
+      if (workspace && element.dataset.taskId) await offerProjectTask(workspace, element.dataset.taskId);
+      break;
+    case 'refresh-codex-metadata':
+      if (workspace) await ensureCodexMetadata(workspace, true);
       break;
     case 'open-intellij':
       if (workspace) resultToast(await withBusy('open-intellij', () => api.system.openInIntelliJ(workspace.id)));
@@ -1525,6 +1785,8 @@ async function selectWorkspace(workspaceId: string): Promise<void> {
   const workspace = currentWorkspace();
   if (workspace) {
     void refreshGit(workspace);
+    void ensureProjectSystem(workspace);
+    void ensureCodexMetadata(workspace);
     if (ui.activeTab === 'codex') void ensureThreads(workspace);
   }
 }
@@ -1533,14 +1795,14 @@ async function setTab(tab: MainTab): Promise<void> {
   ui.activeTab = tab;
   renderAll({ preserveFocus: true });
   const workspace = currentWorkspace();
-  if (workspace && tab === 'codex') await ensureThreads(workspace);
+  if (workspace && tab === 'codex') await Promise.all([ensureCodexMetadata(workspace), ensureThreads(workspace)]);
   if (tab === 'terminal') window.setTimeout(() => document.querySelector<HTMLInputElement>('#terminal-input')?.focus(), 0);
 }
 
 async function openCodex(workspace: Workspace): Promise<void> {
   ui.activeTab = 'codex';
   renderAll();
-  await ensureThreads(workspace);
+  await Promise.all([ensureCodexMetadata(workspace), ensureThreads(workspace)]);
 }
 
 async function createTerminal(workspace: Workspace): Promise<TerminalViewState | null> {
@@ -1706,14 +1968,32 @@ async function submitWorkspaceForm(): Promise<void> {
     root: String(data.get('root') ?? ''),
     commands: parseCommands(String(data.get('commands') ?? ''), existing?.commands),
     contextItems: existing?.contextItems ?? [],
+    codexModel: existing?.codexModel ?? null,
+    codexEffort: existing?.codexEffort ?? null,
   };
+  const initializeProject = !existing && data.get('initializeProject') === 'on';
   const result = await withBusy('save-workspace', () => api.state.saveWorkspace(draft));
   if (!result) return;
   ui.data = result;
   ui.modal = null;
   renderAll();
   const workspace = currentWorkspace();
-  if (workspace) void refreshGit(workspace);
+  if (workspace) {
+    void refreshGit(workspace);
+    void ensureCodexMetadata(workspace);
+    if (initializeProject) {
+      try {
+        ui.projectSystems.set(workspace.id, await api.project.initialize(workspace.id));
+        renderAll({ preserveFocus: true });
+        toast('Workspace and project files created.');
+        return;
+      } catch (error) {
+        toast(`Workspace created, but project setup failed: ${errorMessage(error)}`, 'error');
+        return;
+      }
+    }
+    void ensureProjectSystem(workspace);
+  }
   toast(existing ? 'Workspace updated.' : 'Workspace created.');
 }
 
@@ -1721,6 +2001,7 @@ async function deleteWorkspace(workspaceId: string): Promise<void> {
   try {
     ui.data = await api.state.deleteWorkspace(workspaceId);
     ui.git.delete(workspaceId);
+    ui.projectSystems.delete(workspaceId);
     ui.threadLists.delete(workspaceId);
     ui.activeThread.delete(workspaceId);
     for (const [handle, terminal] of ui.terminals) {

@@ -7,7 +7,7 @@ Workbench is a control plane around existing tools. The workspace is the product
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
 │ Electron renderer                                                  │
-│ dashboard · context tray · Codex UI · terminal · command palette   │
+│ dashboard · task queue · context tray · Codex UI · terminal        │
 └──────────────────────────────┬─────────────────────────────────────┘
                                │ narrow typed IPC
 ┌──────────────────────────────▼─────────────────────────────────────┐
@@ -36,7 +36,7 @@ The preload bridge maps a fixed method list to IPC channels. It does not expose 
 
 ### Main process
 
-The main process validates workspace IDs through the persistent store before each privileged operation. Context reads are additionally checked using both normalized paths and WSL `realpath` values.
+The main process validates workspace IDs through the persistent store before each privileged operation. Context reads are additionally checked using both normalized paths and WSL `realpath` values. Project-workflow operations resolve the workspace root and each fixed Markdown filename before reading or writing, and reject symlinks that escape the root.
 
 ### Codex
 
@@ -46,7 +46,7 @@ A Codex turn is started with:
 
 ```json
 {
-  "approvalPolicy": "onRequest",
+  "approvalPolicy": "on-request",
   "sandboxPolicy": {
     "type": "workspaceWrite",
     "writableRoots": ["/workspace/root"],
@@ -54,6 +54,10 @@ A Codex turn is started with:
   }
 }
 ```
+
+Thread creation and resume use the app-server's top-level `sandbox: "workspace-write"` mode. Turn overrides use the distinct tagged sandbox-policy object shown above, whose type is `workspaceWrite`.
+
+The renderer loads the current model catalog with `model/list`, stores a workspace-level model and reasoning effort, and passes them through thread and turn requests. `account/rateLimits/read` plus `account/rateLimits/updated` supply the primary usage window shown in the dashboard and Codex toolbar.
 
 These values can be changed in Settings.
 
@@ -73,11 +77,16 @@ PersistedState
 └── workspaces[]
     ├── identity and display metadata
     ├── WSL distribution and root
+    ├── Codex model and reasoning effort
     ├── quick commands[]
     └── contextItems[]
 ```
 
 Writes use a temporary file followed by a rename. Invalid legacy workspace entries are skipped rather than preventing startup. A malformed state file is preserved with a `.broken-<timestamp>` suffix and Workbench starts with clean state.
+
+## Markdown project workflow
+
+`project-system.ts` treats `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` as the durable project workflow. Initialization creates only missing files. Task additions are normalized into a fixed Markdown block and appended to `TASKS.md`; the renderer parses those blocks into the dashboard queue. The main process uses fixed filenames, `realpath`, and workspace-boundary checks so the preload API cannot select arbitrary files.
 
 ## Codex message flow
 
@@ -95,6 +104,8 @@ The renderer treats item lifecycle events as the source of truth and also tracks
 
 - Missing WSL or Codex is surfaced in the environment status instead of crashing the renderer.
 - A failed Codex connection can be retried from the Codex tab.
+- Unavailable model or usage metadata leaves the main workspace usable and exposes a retry control.
+- Missing Markdown workflow files are shown explicitly and can be initialized without replacing existing files; unsafe symlinks are refused.
 - A failed experimental PTY starts a direct WSL shell.
 - An unreadable context file creates a warning inside the generated package.
 - Oversized context files are truncated and labeled.

@@ -11,6 +11,7 @@ import type {
   ActionResult,
   CodexConnectionStatus,
   CodexEventEnvelope,
+  ProjectTaskDraft,
   CodexServerRequestEnvelope,
   ContextItem,
   TerminalDataEnvelope,
@@ -19,7 +20,9 @@ import type {
   WorkspaceDraft,
 } from '../shared/types';
 import { CodexAppServerManager } from './codex-app-server';
+import { CODEX_THREAD_SANDBOX_MODE, toCodexApprovalPolicy } from './codex-protocol';
 import { buildContextPack, suggestedContextFileName } from './context-service';
+import { addProjectTask, initializeProjectSystem, inspectProjectSystem } from './project-system';
 import { uncToWslPath, toWslUnc } from './path-utils';
 import { WorkbenchStore } from './store';
 import { TerminalManager } from './terminal-manager';
@@ -45,11 +48,15 @@ function removeAllWorkbenchHandlers(): void {
   const channels = [
     'state:get',
     'state:save-workspace',
+    'state:save-codex-preferences',
     'state:delete-workspace',
     'state:select-workspace',
     'state:save-settings',
     'state:add-context-item',
     'state:remove-context-item',
+    'project:inspect',
+    'project:initialize',
+    'project:add-task',
     'system:inspect',
     'system:git-status',
     'system:open-intellij',
@@ -59,6 +66,8 @@ function removeAllWorkbenchHandlers(): void {
     'context:copy',
     'context:save',
     'codex:connect',
+    'codex:list-models',
+    'codex:rate-limits',
     'codex:list-threads',
     'codex:start-thread',
     'codex:resume-thread',
@@ -82,6 +91,11 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
 
   ipcMain.handle('state:get', () => store.getState());
   ipcMain.handle('state:save-workspace', (_event, draft: WorkspaceDraft) => store.saveWorkspace(draft));
+  ipcMain.handle(
+    'state:save-codex-preferences',
+    (_event, workspaceId: string, model: string | null, effort: string | null) =>
+      store.saveCodexPreferences(String(workspaceId), model, effort),
+  );
   ipcMain.handle('state:delete-workspace', (_event, workspaceId: string) => store.deleteWorkspace(String(workspaceId)));
   ipcMain.handle('state:select-workspace', (_event, workspaceId: string | null) => store.selectWorkspace(workspaceId));
   ipcMain.handle('state:save-settings', (_event, settings: WorkbenchSettings) => store.saveSettings(settings));
@@ -90,6 +104,11 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
     (_event, workspaceId: string, item: Omit<ContextItem, 'id'>) =>
       store.addContextItem(String(workspaceId), item),
   );
+
+  ipcMain.handle('project:inspect', (_event, workspaceId: string) => inspectProjectSystem(workspace(workspaceId)));
+  ipcMain.handle('project:initialize', (_event, workspaceId: string) => initializeProjectSystem(workspace(workspaceId)));
+  ipcMain.handle('project:add-task', (_event, workspaceId: string, task: ProjectTaskDraft) =>
+    addProjectTask(workspace(workspaceId), task));
   ipcMain.handle(
     'state:remove-context-item',
     (_event, workspaceId: string, itemId: string) =>
@@ -153,6 +172,14 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
     await codex.connect(selected.distro);
     return action(`Codex connected in ${selected.distro}.`);
   });
+  ipcMain.handle('codex:list-models', (_event, workspaceId: string) => {
+    const selected = workspace(workspaceId);
+    return codex.request(selected.distro, 'model/list', { limit: 100, includeHidden: false });
+  });
+  ipcMain.handle('codex:rate-limits', (_event, workspaceId: string) => {
+    const selected = workspace(workspaceId);
+    return codex.request(selected.distro, 'account/rateLimits/read');
+  });
   ipcMain.handle('codex:list-threads', (_event, workspaceId: string) => {
     const selected = workspace(workspaceId);
     return codex.request(selected.distro, 'thread/list', {
@@ -166,9 +193,10 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
     const settings = store.getState().settings;
     return codex.request(selected.distro, 'thread/start', {
       cwd: selected.root,
-      approvalPolicy: settings.approvalPolicy,
-      sandbox: 'workspaceWrite',
+      approvalPolicy: toCodexApprovalPolicy(settings.approvalPolicy),
+      sandbox: CODEX_THREAD_SANDBOX_MODE,
       serviceName: 'workbench',
+      ...(selected.codexModel ? { model: selected.codexModel } : {}),
     });
   });
   ipcMain.handle('codex:resume-thread', (_event, workspaceId: string, threadId: string) => {
@@ -177,8 +205,9 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
     return codex.request(selected.distro, 'thread/resume', {
       threadId: String(threadId),
       cwd: selected.root,
-      approvalPolicy: settings.approvalPolicy,
-      sandbox: 'workspaceWrite',
+      approvalPolicy: toCodexApprovalPolicy(settings.approvalPolicy),
+      sandbox: CODEX_THREAD_SANDBOX_MODE,
+      ...(selected.codexModel ? { model: selected.codexModel } : {}),
     });
   });
   ipcMain.handle('codex:read-thread', (_event, workspaceId: string, threadId: string) => {
@@ -197,12 +226,14 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
       threadId: String(threadId),
       input: [{ type: 'text', text: input }],
       cwd: selected.root,
-      approvalPolicy: settings.approvalPolicy,
+      approvalPolicy: toCodexApprovalPolicy(settings.approvalPolicy),
       sandboxPolicy: {
         type: 'workspaceWrite',
         writableRoots: [selected.root],
         networkAccess: settings.networkAccess,
       },
+      ...(selected.codexModel ? { model: selected.codexModel } : {}),
+      ...(selected.codexEffort ? { effort: selected.codexEffort } : {}),
     });
   });
   ipcMain.handle('codex:interrupt-turn', async (_event, workspaceId: string, threadId: string, turnId: string) => {

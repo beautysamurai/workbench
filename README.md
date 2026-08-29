@@ -13,7 +13,9 @@ It does not add another paid AI provider and it does not replace IntelliJ, ChatG
 - Persistent workspaces for code, research, interview preparation, or any WSL directory
 - A polished dashboard with live Git, WSL, Codex, context, and terminal status
 - Native Codex threads through `codex app-server`
+- Workspace-level Codex model and reasoning-effort selection with remaining primary usage shown in the app
 - Streaming agent messages, plans, shell output, diffs, reviews, and approval requests
+- A GUI task queue backed by `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`
 - Embedded persistent WSL shells, with a direct-process fallback when the experimental Codex PTY API is unavailable
 - Reusable workspace commands such as `./gradlew test`, `jupyter lab`, or `git status --short`
 - A context tray containing files, notes, and links
@@ -86,6 +88,8 @@ Git summary :: git status --short
 
 A workspace can also point to a research or study folder; it does not need to be a Git repository.
 
+For new coding workspaces, **Set up the Markdown project workflow** is enabled by default. Workbench creates only missing `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` files; it never replaces existing guidance. The dashboard reads tasks from `TASKS.md`, lets you add queue entries through a form, and can place a selected task into the Codex composer.
+
 ## How Codex integration works
 
 Workbench starts this process inside the selected WSL distribution:
@@ -104,6 +108,8 @@ The Electron main process communicates with it over JSONL using the official app
 - review results
 - command and file-change approval requests
 - turn interruption and thread archiving
+- live model/reasoning selection from the installed Codex catalog
+- remaining primary usage and its reset time
 
 Workbench uses the Codex login already stored in WSL. It does not read, duplicate, or store an OpenAI API key.
 
@@ -125,7 +131,7 @@ Workbench deliberately starts conservatively:
 
 - Codex turns use `workspaceWrite` with only the workspace root listed as writable.
 - Network access for sandboxed Codex commands is off by default.
-- Approval policy defaults to `onRequest`.
+- Approval policy defaults to **Ask when needed** (`on-request` in the Codex app-server protocol).
 - Context files must lexically and physically resolve under the workspace root; symlink escapes are rejected.
 - Renderer code has no Node.js access. Electron runs with context isolation, renderer sandboxing, and a narrow preload bridge.
 - External links are opened in the system browser rather than inside the privileged application window.
@@ -168,10 +174,12 @@ src/
 │   ├── wsl.ts                  WSL discovery, Git status, and app launching
 │   ├── context-service.ts      Safe project-file loading and context creation
 │   ├── context-format.ts       Pure Markdown context formatter
+│   ├── project-system.ts       Safe Markdown workflow initialization and task parsing
 │   └── store.ts                Atomic local JSON persistence
 ├── renderer/
 │   ├── main.ts                 Workspace UI and interaction state
 │   ├── styles.css              Complete visual system
+│   ├── codex-metadata.ts       Model preference and usage-limit normalization
 │   ├── mock-api.ts             Browser-only preview backend
 │   ├── markdown.ts             Safe minimal Markdown/diff rendering
 │   └── terminal-buffer.ts      ANSI cleanup and terminal scrollback

@@ -4,6 +4,7 @@ import type {
   CodexServerRequestEnvelope,
   ContextBuildResult,
   PersistedState,
+  ProjectSystemStatus,
   TerminalDataEnvelope,
   TerminalExitEnvelope,
   WorkbenchApi,
@@ -34,6 +35,8 @@ const sampleWorkspaces: Workspace[] = [
       { id: 'arch', type: 'file', label: 'Curve architecture', value: 'docs/curve-dependency.md', includeContent: true },
       { id: 'note', type: 'note', label: 'Design constraints', value: 'JPY dependencies are non-linear. Preserve compatibility with the shared regional implementation.', includeContent: true },
     ],
+    codexModel: 'gpt-5.6-terra',
+    codexEffort: 'medium',
     createdAt: now,
     updatedAt: now,
   },
@@ -48,6 +51,8 @@ const sampleWorkspaces: Workspace[] = [
     contextItems: [
       { id: 'ideas', type: 'note', label: 'Current question', value: 'Model RFQ skew using inventory and post-trade market response.', includeContent: true },
     ],
+    codexModel: null,
+    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -60,6 +65,8 @@ const sampleWorkspaces: Workspace[] = [
     root: '/home/kabes/projects/spring-lab',
     commands: [{ id: 'dev', name: 'Development server', command: './gradlew bootRun' }],
     contextItems: [],
+    codexModel: null,
+    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -72,6 +79,8 @@ const sampleWorkspaces: Workspace[] = [
     root: '/home/kabes/career/interview',
     commands: [],
     contextItems: [],
+    codexModel: null,
+    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -94,6 +103,12 @@ const requestListeners = new Set<(event: CodexServerRequestEnvelope) => void>();
 const statusListeners = new Set<(event: CodexConnectionStatus) => void>();
 const terminalDataListeners = new Set<(event: TerminalDataEnvelope) => void>();
 const terminalExitListeners = new Set<(event: TerminalExitEnvelope) => void>();
+const projectTasks = new Map<string, Array<{ id: string; title: string; state: 'pending' | 'in progress' | 'blocked' | 'done'; objective: string }>>([
+  ['curve-server', [
+    { id: 'P0-101', title: 'Repair curve invalidation', state: 'in progress', objective: 'Fix the failing dependency-chain test.' },
+    { id: 'P1-102', title: 'Profile allocation spike', state: 'pending', objective: 'Find avoidable pricing allocations.' },
+  ]],
+]);
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -110,6 +125,8 @@ function saveWorkspace(draft: WorkspaceDraft): PersistedState {
     root: draft.root,
     commands: draft.commands ?? existing?.commands ?? [],
     contextItems: draft.contextItems ?? existing?.contextItems ?? [],
+    codexModel: draft.codexModel ?? existing?.codexModel ?? null,
+    codexEffort: draft.codexEffort ?? existing?.codexEffort ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: new Date().toISOString(),
   };
@@ -154,11 +171,29 @@ function workspaceById(workspaceId: string): Workspace {
   return workspace;
 }
 
+function mockProjectStatus(workspaceId: string): ProjectSystemStatus {
+  return {
+    files: [
+      { name: 'AGENTS.md', exists: true, safe: true },
+      { name: 'TASKS.md', exists: true, safe: true },
+      { name: 'WORKBENCH_PROGRESS.md', exists: true, safe: true },
+    ],
+    tasks: clone(projectTasks.get(workspaceId) ?? []),
+    ready: true,
+  };
+}
+
 export function createMockApi(): WorkbenchApi {
   return {
     state: {
       get: async () => clone(state),
       saveWorkspace: async (draft) => saveWorkspace(draft),
+      saveCodexPreferences: async (workspaceId, model, effort) => {
+        const workspace = workspaceById(workspaceId);
+        workspace.codexModel = model;
+        workspace.codexEffort = effort;
+        return clone(state);
+      },
       deleteWorkspace: async (workspaceId) => {
         state.workspaces = state.workspaces.filter((workspace) => workspace.id !== workspaceId);
         if (state.selectedWorkspaceId === workspaceId) state.selectedWorkspaceId = state.workspaces[0]?.id ?? null;
@@ -181,6 +216,16 @@ export function createMockApi(): WorkbenchApi {
         const workspace = workspaceById(workspaceId);
         workspace.contextItems = workspace.contextItems.filter((item) => item.id !== itemId);
         return clone(state);
+      },
+    },
+    project: {
+      inspect: async (workspaceId) => mockProjectStatus(workspaceId),
+      initialize: async (workspaceId) => mockProjectStatus(workspaceId),
+      addTask: async (workspaceId, task) => {
+        const tasks = projectTasks.get(workspaceId) ?? [];
+        tasks.push({ id: `WB-${id().slice(0, 8)}`, title: task.title, objective: task.objective || task.title, state: 'pending' });
+        projectTasks.set(workspaceId, tasks);
+        return mockProjectStatus(workspaceId);
       },
     },
     system: {
@@ -224,6 +269,16 @@ export function createMockApi(): WorkbenchApi {
         setTimeout(() => statusListeners.forEach((listener) => listener({ distro, state: 'connected', message: 'Codex connected.' })), 450);
         return { ok: true, message: 'Codex connected.' };
       },
+      listModels: async () => ({
+        data: [
+          { id: 'gpt-5.6-sol', model: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', description: 'Highest capability', hidden: false, defaultReasoningEffort: 'low', supportedReasoningEfforts: [{ reasoningEffort: 'low', description: 'Fast' }, { reasoningEffort: 'high', description: 'Thorough' }], isDefault: true },
+          { id: 'gpt-5.6-terra', model: 'gpt-5.6-terra', displayName: 'GPT-5.6 Terra', description: 'Balanced', hidden: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Balanced' }, { reasoningEffort: 'high', description: 'Thorough' }], isDefault: false },
+        ],
+        nextCursor: null,
+      }),
+      getRateLimits: async () => ({
+        rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 34, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3_600 }, secondary: null },
+      }),
       listThreads: async () => ({
         data: [
           { id: 'thr-refactor', name: 'Refactor dependency graph', preview: 'Review the non-linear index dependency changes', cwd: '/home/kabes/projects/curve-server', updatedAt: Date.now() / 1000 },
