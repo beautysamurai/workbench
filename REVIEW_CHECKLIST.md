@@ -11,7 +11,7 @@ Use the relevant sections after the application has a reproducible baseline. Rec
 - [ ] `git log origin/<default>..HEAD` and `git diff origin/<default>...HEAD` show only the current task's commits (plus any deliberate synchronization merge) and paths.
 - [ ] Only task-scoped changes were staged, committed, and pushed; the default/protected branch was not pushed directly.
 - [ ] The pull request states the behavior change, exact verification, unavailable checks, risks, and task reference.
-- [ ] Required CI passed; any pending or failed required check is recorded accurately and leaves delivery incomplete.
+- [ ] Every applicable repository CI job passed, including status contexts not marked required by branch protection; any pending or failed applicable job is recorded accurately and leaves delivery incomplete.
 - [ ] GitHub Copilot reviewed the pull request and, when fixes were pushed, reviewed the new pushes.
 - [ ] Every Copilot summary, inline comment, and unresolved thread was evaluated as accepted, incorrect/not applicable, or follow-up with evidence.
 - [ ] Accepted findings were fixed and verified; rejected findings have a concise technical rationale; valid out-of-scope findings have a task.

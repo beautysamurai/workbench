@@ -9,7 +9,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 - **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
-- **Next action:** Publish the accepted task-branch-base review fix on PR #1, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
+- **Next action:** Publish the accepted applicable-CI review fix on PR #1, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -594,6 +594,32 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including the WSL integration suite; exit `0`.
 - `npm run build` completed the clean production compilation and asset copy; exit `0`.
 - `git diff --check origin/main` passes for the complete review-fix worktree diff.
+- The complete PR diff remains limited to the same four Markdown files; no application, test, package, setup, or workflow file is changed relative to `main`.
+- Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
+- Merge of PR #1 remains separately authorized and was not performed.
+- Blocker: none established while the review fix and final verification remain actionable.
+
+### 2026-08-30 00:23 JST — P2-003 required applicable CI independent of branch-protection settings
+
+**Remote evidence and finding**
+
+- PR #1 head `2bddd09e531b5acdce6ea239ee99703978d47094` passed both workflow events. Push run `33259884402` passed Linux job `99119892566` (24 of 24 tests) and Windows job `99119892519` (22 of 22 tests, NSIS packaging, artifact `9716957158` at 110,921,355 bytes with digest `sha256:d95bcb1f6600376c8eb41d035a60c494374f0254b167c8d8ca9d1100d3ab53b9`). Pull-request run `33259886945` passed Linux job `99119899717` (24 of 24) and Windows job `99119899805` (22 of 22, NSIS packaging, artifact `9716955476` at 110,921,356 bytes with digest `sha256:f378a0421aebc49e0690fb2b0be364d44ad82c676b371bfbcef152a1881cdad1`).
+- Both Windows jobs invoked `electron-builder --win nsis --publish never`; neither log contains an implicit-publishing message or the missing-`GH_TOKEN` error.
+- Automated Codex re-review completed on `2bddd09` and opened one new P2 thread: wording limited to “required CI” is vacuous when active ruleset `21797957` does not mark the configured Linux or Windows status contexts as required.
+
+**Disposition and change**
+
+- Accepted. Branch-protection optionality is not evidence that a configured, relevant verification or packaging job may fail without blocking delivery.
+- `AGENTS.md`, `CODEX_WORKFLOW.md`, and `REVIEW_CHECKLIST.md` now require every applicable repository CI job to pass, whether or not its status context is marked required by branch protection.
+- Historical progress entries retain their original “required CI” wording as append-only evidence; this entry records the corrected current policy.
+- Files changed for this review fix: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this progress entry. No changelog entry was added because this is engineering-process documentation.
+
+**Verification and remaining action**
+
+- Manual cross-reference review confirms the definition of done, review loop, and checklist use the same applicable-CI rule.
+- `npm run check` type-checked both TypeScript projects and passed all nine selected compiled test files, including the WSL integration suite; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`.
+- `git diff --check origin/main` passes for the complete applicable-CI review-fix worktree diff.
 - The complete PR diff remains limited to the same four Markdown files; no application, test, package, setup, or workflow file is changed relative to `main`.
 - Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
 - Merge of PR #1 remains separately authorized and was not performed.

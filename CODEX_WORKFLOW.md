@@ -211,14 +211,14 @@ Repository administrators should configure an active branch ruleset targeting th
 
 For every pull request:
 
-1. Wait for required CI checks and the Copilot review to finish. If automatic review is not configured or did not trigger, request it explicitly with `gh pr edit <number> --add-reviewer @copilot`.
+1. Wait for every applicable repository CI job and the Copilot review to finish. A status context being optional in branch protection does not make a configured, relevant CI job optional for delivery. If automatic review is not configured or did not trigger, request it explicitly with `gh pr edit <number> --add-reviewer @copilot`.
 2. Read the complete pull-request review state: check results, review summaries, inline threads, and unresolved conversations. Do not treat a green build or the absence of a blocking review as proof that comments were addressed.
 3. Reflect on each finding against the code, tests, security boundaries, and acceptance criteria. Classify it as:
    - **accepted** — implement the smallest complete fix and add or adjust verification;
    - **not applicable / incorrect** — document the evidence-based reason in the pull request;
    - **follow-up** — document the finding in the pull request and add a concise `TASKS.md` queue entry as review metadata when appropriate; do not implement it in the current pull request. Its implementation is a separate task with its own branch and pull request.
 4. When review produces an accepted fix or another task-scoped repository change, update `WORKBENCH_PROGRESS.md` with the findings and dispositions, commit the change, and push the feature branch. With **Review new pushes** enabled, Copilot automatically re-reviews the new commit. Do not create another evidence-only commit solely to record the completed review of the final task commit, because that push would invalidate the just-reviewed head.
-5. Repeat until required CI is green, every actionable Copilot finding is fixed or explicitly dispositioned, no unresolved in-scope review thread remains, and the final diff has been reviewed again locally.
+5. Repeat until every applicable repository CI job is green regardless of branch-protection status, every actionable Copilot finding is fixed or explicitly dispositioned, no unresolved in-scope review thread remains, and the final diff has been reviewed again locally.
 6. Report the final review state and remaining risks in the pull request and final response. The last in-repository progress entry may describe the preceding review and the changes that produced the final reviewed commit; it need not trigger an endless evidence-only push. Copilot submits advisory comment reviews; it does not approve the pull request and does not replace required human approval or the merge policy.
 
 Do not auto-merge merely because Copilot has commented or CI is green. Merging, releasing, deleting the branch, or overriding a protection rule remains a separate authorized action.
