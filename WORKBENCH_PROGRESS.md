@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-003 — Establish a trustworthy automated verification baseline
+- **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-001 and P0-002 are complete; P0-003 has passing full and portable local checks plus a successful initial split Linux/Windows GitHub run, while the accepted review fix awaits pushed-head CI and re-review
-- **Next action:** Publish the accepted PR #2 review fix, confirm the final GitHub jobs and automated re-review, then mark P0-003 done and hand off the green PR for separately authorized merge
+- **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery runs the full Linux/WSL suite and the portable native-Windows suite, and PR #2's final task head passed both GitHub jobs, Windows packaging, artifact upload, and automated re-review
+- **Next action:** Confirm the records-only closeout head remains green and reviewed, update PR #2 with final evidence, and hand it off for a separately authorized merge before unblocking PR #1
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -426,4 +426,25 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The exact `npm run check:portable` command passed on native Windows in job `99108608213` with 22 tests; local portable/full/failure/build checks remain green from the preceding entry.
 - PowerShell syntax execution is unavailable in this WSL environment because `pwsh` is not installed; the change is a literal npm-command substitution and will be reviewed on the final head.
 - Required next checks: `git diff --check`, final GitHub Actions Linux/Windows jobs, artifact upload, and automated re-review.
+- Blocker: none established.
+
+### 2026-08-29 22:49 JST — P0-003 completed the automated verification baseline
+
+**Final task-head evidence**
+
+- Pull request #2 task head `dfeacb84e2bcd9c10664a6da3b7683f6d743ec79` passed GitHub Actions run `33255824478`.
+- Linux job `99109222700` completed `npm ci` and the full `npm run check` successfully.
+- Windows job `99109222775` completed `npm ci`, `npm run check:portable`, `npm run dist:win`, and artifact upload successfully.
+- Artifact `Workbench-Windows` (`9715782305`) was uploaded at 110,921,329 bytes with digest `sha256:5fefc23174ba3f2ea6066bc945e0a9724430b7b72e489301c698e9bb6bc68bb4`.
+- Automated Codex re-review completed on `dfeacb8` with no new finding. All three earlier threads are resolved: retain Windows-compatible tests was accepted and fixed; shell-independent, fail-closed discovery was accepted as hardening while its zero-test premise was disproved by the Windows job; and native `setup.ps1` was aligned with the portable contract.
+
+**Closeout**
+
+- P0-003 is marked `done`. The baseline now gives independent evidence for full Linux/WSL verification and native-Windows portable verification, installer creation, and artifact upload without skipping or mocking the WSL integration cases.
+- Files changed for this records-only closeout: `TASKS.md` and `WORKBENCH_PROGRESS.md`. No changelog entry was added because this is engineering verification rather than user-visible application behavior.
+- `git diff --check` passes for the complete branch diff.
+- Remaining risk: hosted CI still does not exercise the actual Windows-to-WSL `wsl.exe` envelope or DrvFS behavior; that needs a provisioned Windows+WSL runner or a manual environment. `package.json` has no lint script, so lint remains explicitly unavailable.
+- Repository policy note: ruleset `21797957` does not currently require the workflow contexts, although the repository CI evidence is green.
+- Merge was not performed; human approval and merge authorization remain separate. After this closeout commit is pushed, its CI and automated review must complete before PR #2 is handed off. Their final state belongs in the pull-request description and delivery response, not another evidence-only commit.
+- Next task: P0-004 — Review main/preload/renderer and IPC security.
 - Blocker: none established.
