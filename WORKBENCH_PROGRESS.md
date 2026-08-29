@@ -369,3 +369,38 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Review thread: resolve the accepted finding only after the final branch includes this change; request automatic re-review of the new head.
 - Merge: not performed; merge authorization remains separate from implementation delivery.
 - Blocker: none established.
+
+### 2026-08-29 22:33 JST — P0-003 made test selection explicit and non-vacuous
+
+**Automated re-review finding**
+
+- Re-review completed on PR #2 head `6e1106700d2ebe83b85b8e2c43b4057c7fd7fc13` with one new P2 concern: a shell might pass `dist-test/tests/*.test.js` literally and Node can exit successfully after selecting zero tests.
+- Direct Windows evidence qualifies the finding: job `99107209399` ran the exact `npm run check:portable` script and reported tests `1..22`, `pass 22`, `fail 0`. The quoted zero-test reproduction therefore did not match the actual workflow invocation.
+- Disposition: partially accepted as baseline hardening. The pushed command was not vacuous, but test selection should not depend on shell/platform glob behavior and an empty suite must fail explicitly.
+
+**Changes**
+
+- Added `scripts/run-tests.cjs`, which validates its mode, deterministically enumerates compiled `.test.js` files, prints the selected inventory, passes explicit paths to the Node test runner without a shell, and fails if no files are selected.
+- Portable mode selects only root test files; full mode recursively includes the nested WSL integration suite.
+- Full mode also fails if the expected WSL suite is absent, and `scripts/clean-tests.cjs` removes stale compiled tests before every test build.
+- Updated `test:portable` and `test` to use the shared enumerator. Type-check and workflow commands remain unchanged.
+- Files changed for this re-review response: `package.json`, `scripts/clean-tests.cjs`, `scripts/run-tests.cjs`, and `WORKBENCH_PROGRESS.md`.
+- P0-003 remains in progress until both explicit-selection modes and the final remote jobs/re-review pass.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run check:portable` | Type-checked both projects, then printed and passed the eight selected root test files; exit `0`. |
+| passed | `npm run check` | Printed all nine selected files, including `dist-test/tests/wsl/project-system.test.js`, then passed the full suite; exit `0`. |
+| passed failure path | `node scripts/run-tests.cjs portable` with an empty `dist-test/tests` | Refused the empty selection with `No portable compiled test files found`; exit `1`. |
+| passed failure path | `node scripts/run-tests.cjs full` after temporarily moving the generated WSL test file aside | Refused to report a full pass without a WSL integration file; exit `1`; the generated file was restored. |
+| passed | create `dist-test/tests/stale.test.js`, then `npm run build:tests` and `test ! -e dist-test/tests/stale.test.js` | The test-only clean removed the stale compiled file before TypeScript rebuilt current sources; exits `0`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `node -e "const fs=require('node:fs'); const yaml=require('js-yaml'); yaml.load(fs.readFileSync('.github/workflows/build.yml','utf8')); console.log('workflow yaml parsed')"`; `git diff --check` | Workflow syntax parsed and the diff has no whitespace errors; exits `0`. |
+| pending | final GitHub Actions run and automated re-review | Explicit-selection changes have not yet been published at this point in the append-only record. |
+
+**Current state**
+
+- P0-003 remains in progress pending final remote evidence on the explicit enumerator.
+- Blocker: none established.
