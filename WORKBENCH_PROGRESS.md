@@ -291,7 +291,7 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Changes**
 
 - Branch / pull request: `codex/automate-pr-delivery`; https://github.com/beautysamurai/workbench/pull/1.
-- Files delivered: `AGENTS.md`, `CODEX_WORKFLOW.md`, and `REVIEW_CHECKLIST.md` only.
+- Files delivered: `AGENTS.md`, `CODEX_WORKFLOW.md`, `REVIEW_CHECKLIST.md`, and this scoped `WORKBENCH_PROGRESS.md` entry only.
 - Result: repository-changing tasks now default to an early feature branch and the scoped commit/push/PR/review loop unless the user explicitly opts out or a genuine blocker remains. Merge, release, branch deletion, force-push, and protection overrides remain separately authorized.
 - Audit refinements: required CI must pass; preserved dirty work has an auxiliary-worktree delivery path; follow-up task records are review metadata but their implementation uses a separate branch; and review of the final task commit is reported without creating an endless evidence-only push/re-review cycle.
 
@@ -303,15 +303,21 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 | passed | scoped branch/commit review against `origin/main` | Original commit `ac1b895` changed exactly the three workflow Markdown files; unrelated working-tree files remained unstaged and unpublished. |
 | passed | GitHub automated review of `ac1b895` | Completed with no review comments or unresolved threads. |
 | passed | independent workflow-doc audit | Five ambiguities were accepted and corrected: review-loop termination, genuine-blocker scope, dirty-worktree synchronization, CI success semantics, and follow-up-task scope. |
-| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-003 already tracks the verification-baseline repair. |
+| failed — pre-existing baseline | Windows workflow runs `33241495957` on base `4da6c4b` and `33252200480` on the PR | Both fail the same two unchanged WSL-dependent project-system tests because the hosted runner has no `Local Linux` distribution; `dist:win` is skipped. P0-004 already tracks the verification-baseline repair. |
 
 **Closeout**
 
-- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-003.
+- Task-board update: no new queue item; this clarifies the completed P2-003 workflow, and the unrelated CI baseline remains P0-004.
 - Changelog/docs update: no changelog entry because this is an engineering-process change, not user-visible application behavior.
-- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-003 fixes the baseline and the PR reruns successfully.
+- Delivery state: pull request open; the final follow-up commit requires automated re-review. Required Windows CI remains a recorded genuine blocker to delivery completion until P0-004 fixes the baseline and the PR reruns successfully.
 
 **Automated review follow-up**
 
 - Review of `efac13d` accepted one P2 finding: the published task board calls the verification-baseline task P0-003, while the preserved unpublished P0-002 work renumbers it to P0-004.
 - The pull-request record is corrected to the published P0-003 identifier without staging the unrelated task-board renumbering. The correction commit requires one final automated re-review; its final state will be reported in the pull request and handoff without another evidence-only commit.
+- Review of `d5df121` accepted two further P2 findings: the delivery inventory omitted this progress entry, and the synchronization procedure created the scoped commit after the step that required it. The inventory now lists all four delivered Markdown files, and commit creation now precedes rebase or auxiliary-worktree cherry-picking.
+
+**Erratum**
+
+- The P0-004 references in the closeout above reflect the preserved unpublished task-board renumbering that was present when this entry was drafted. The task published in this pull request's base is P0-003; use P0-003 for the Windows CI baseline repair.
+- Required Windows CI remains failed and delivery remains incomplete pending that actionable P0-003 repair. It is not a genuine blocker under `AGENTS.md`, because no unavailable user input or external dependency prevents the repair.
