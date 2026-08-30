@@ -46,22 +46,45 @@ export function parseWslgPrimaryDisplayScale(log: string): number | null {
   const outputMarker = 'disp_monitor_validate_and_compute_layout:---OUTPUT---';
   const outputStart = latestLayout.indexOf(outputMarker);
   const inputLayout = outputStart >= 0 ? latestLayout.slice(0, outputStart) : latestLayout;
-  const primaryScale = inputLayout.match(
-    /rdpMonitor\[(\d+)\]: x:[^\r\n]*is_primary:1[\s\S]*?rdpMonitor\[\1\]: desktopScaleFactor:(\d+)/,
-  );
-  if (!primaryScale) return null;
+  const headers = [...inputLayout.matchAll(
+    /rdpMonitor\[(\d+)\]: x:[^\r\n]*is_primary:(\d+)/g,
+  )];
+  if (headers.length === 0) return null;
 
-  const percentage = Number(primaryScale[2]);
-  if (!Number.isInteger(percentage) || percentage < 100 || percentage > 500) return null;
-  const monitorIndex = primaryScale[1];
-  const monitorRemainder = inputLayout.slice(primaryScale.index ?? 0);
-  const clientScalePattern = new RegExp(
-    `rdpMonitor\\[${monitorIndex}\\]: scale:[^,\\r\\n]+,\\s*client(?:\\s+scale|Scale)\\s*:\\s*([0-9.]+)`,
-  );
-  const clientScale = Number(monitorRemainder.match(clientScalePattern)?.[1] ?? 1);
-  const residualScale = percentage / 100 / clientScale;
-  if (!Number.isFinite(residualScale) || residualScale < 0.5 || residualScale > 5) return null;
-  return Math.round(residualScale * 1_000) / 1_000;
+  const monitors = headers.map((header, index) => {
+    const monitorIndex = header[1];
+    const blockStart = header.index ?? 0;
+    const blockEnd = headers[index + 1]?.index ?? inputLayout.length;
+    const block = inputLayout.slice(blockStart, blockEnd);
+    const percentagePattern = new RegExp(
+      `rdpMonitor\\[${monitorIndex}\\]: desktopScaleFactor:(\\d+)`,
+    );
+    const clientScalePattern = new RegExp(
+      `rdpMonitor\\[${monitorIndex}\\]: scale:[^,\\r\\n]+,\\s*client(?:\\s+scale|Scale)\\s*:\\s*([0-9.]+)`,
+    );
+    const percentage = Number(block.match(percentagePattern)?.[1]);
+    const clientScale = Number(block.match(clientScalePattern)?.[1] ?? 1);
+    const residualScale = percentage / 100 / clientScale;
+    if (
+      !Number.isInteger(percentage)
+      || percentage < 100
+      || percentage > 500
+      || !Number.isFinite(residualScale)
+      || residualScale < 0.5
+      || residualScale > 5
+    ) return null;
+    return {
+      primary: header[2] === '1',
+      residualScale: Math.round(residualScale * 1_000) / 1_000,
+    };
+  });
+  if (monitors.some((monitor) => monitor === null)) return null;
+
+  const validMonitors = monitors.filter((monitor) => monitor !== null);
+  const primary = validMonitors.find((monitor) => monitor.primary);
+  if (!primary) return null;
+  if (validMonitors.some((monitor) => monitor.residualScale !== primary.residualScale)) return null;
+  return primary.residualScale;
 }
 
 export function detectWslgDisplayScale({

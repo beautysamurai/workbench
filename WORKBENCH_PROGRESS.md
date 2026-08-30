@@ -8,7 +8,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
 - **Next task:** P1-004 — complete correction pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; fractional-scale WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
+- **Verified state:** P1-004 is locally complete; consistently scaled WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds while mixed-scale layouts retain Electron defaults, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
 - **Next action:** Publish the fullscreen scale correction, then complete final-head CI and automated review
 - **Genuine blocker:** None established
 
@@ -776,3 +776,26 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Remaining risk: the reported primary 150% monitor is verified with real host input; moving a running WSLg window between monitors with different scale factors was not physically exercised. Parsing accounts for the current primary monitor and any WSLg client scale, while malformed/unavailable diagnostics fail open to Electron's default behavior.
 - Next action: audit and commit only these task paths, fetch/reconcile with `origin/main`, push the feature branch, open a correction pull request, and complete all applicable CI plus automated review.
 - Blocker: none established.
+
+### 2026-08-30 14:22 JST — P1-004 accepted mixed-scale monitor review finding
+
+**Remote review evidence**
+
+- Pull request #4 was opened at `https://github.com/beautysamurai/workbench/pull/4` with head `f5aba91276807723f92486fe7a5ec5fd9bac7a7f`.
+- Both Linux verification jobs passed in 17–18 seconds and both Windows packaging jobs passed in 1 minute 39 seconds and 1 minute 47 seconds across push and pull-request events.
+- Automated Codex review `5060003679` completed on exact head `f5aba91` with one unresolved P2 thread (`discussion_r3888535749`): the process-wide Chromium scale override selected the primary monitor even when WSLg reported heterogeneous monitor scales.
+- Disposition: accepted. The finding directly affects the display-safety boundary; moving the app to a differently scaled monitor could otherwise trade the reported fix for incorrect geometry on that monitor.
+
+**Scoped correction**
+
+- The WSLg layout parser now validates every reported monitor block and returns a scale only when all residual desktop/client scales agree. A mixed-scale or partially invalid layout returns `null`, preserving Electron's per-display defaults rather than forcing the primary DPI process-wide.
+- The focused fixture now covers homogeneous multi-monitor correction, WSLg-applied client scaling, malformed input, and an explicit heterogeneous 100%/150% no-override case. User documentation and task evidence describe this guardrail.
+- Focused `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed after the review correction; exit `0`. Current `/mnt/wslg/weston.log` detection still returns `1.5` for the reported consistently scaled active layout.
+- Next action: run the complete check/build and local diff review, commit and push the accepted correction, then require final-head CI and automated re-review.
+- Blocker: none established.
+
+**Verification after correction**
+
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 test files, the production build, and whitespace validation; exit `0`.
+- The production auto-detection and real Windows pointer harness were rerun after the mixed-scale guard. The active homogeneous layout still selected `1.5`; Windows and Electron agreed on fullscreen `(0,0) 2560×1440`, all seven host/client y coordinates remained exact, and 900×700 restored.
+- Final next action: commit and push the accepted finding, resolve the review thread with the commit evidence, and complete final-head CI plus automated re-review.
