@@ -6,11 +6,11 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P1-004 — GUI bugfix (`blocked` at remote delivery)
-- **Next task:** P1-004 — authenticate GitHub and complete pull-request delivery
+- **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
+- **Next task:** P1-004 — complete pull-request CI and automated review
 - **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread
-- **Next action:** Authenticate GitHub CLI, push `codex/p1-004-gui-bugfix`, open its pull request, and complete applicable CI plus automated review
-- **Genuine blocker:** No GitHub credentials are available to HTTPS, SSH, or GitHub CLI in this environment
+- **Next action:** Open the P1-004 pull request and complete applicable CI plus automated review
+- **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
 
@@ -701,3 +701,17 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Smallest user action**
 
 - Authenticate GitHub CLI for `beautysamurai/workbench` in this environment (the available portable command is `/tmp/gh_2.45.0_linux_amd64/bin/gh auth login`), then resume P1-004. Workbench can continue from commit `2e61424` without repeating implementation or local verification.
+
+### 2026-08-30 10:39 JST — P1-004 GitHub delivery resumed after authentication
+
+**Environment and remote state**
+
+- GitHub CLI 2.45.0 is persistently available at `/home/kabes/.local/bin/gh`, which was already on the WSL user PATH; no repository dependency or system package was added.
+- GitHub device authentication completed as `beautysamurai`, and `gh auth setup-git` configured HTTPS Git operations for `github.com`.
+- `git push --set-upstream origin codex/p1-004-gui-bugfix` published commits `2e61424` and `dda6465` and configured the feature branch to track `origin/codex/p1-004-gui-bugfix`; exit `0`.
+- `gh pr list --head codex/p1-004-gui-bugfix --state all` returned no existing pull request.
+
+**Next action**
+
+- Commit and publish this resumed-delivery record, open the P1-004 pull request, then complete every applicable CI job and automated review.
+- Blocker: none established.
