@@ -69,6 +69,21 @@ test('parses the primary Windows desktop scale from the latest WSLg layout input
   );
   assert.equal(parseWslgPrimaryDisplayScale('desktopScaleFactor:150'), null);
   assert.equal(parseWslgPrimaryDisplayScale(homogeneousScaleLayout.replace('150', '600')), null);
+  assert.equal(
+    parseWslgPrimaryDisplayScale(
+      homogeneousScaleLayout.replace(
+        'rdpMonitor[0]: scale:1, client scale :1.00',
+        'rdpMonitor[0]: scale:1, client scale :unknown',
+      ),
+    ),
+    null,
+  );
+  assert.equal(
+    parseWslgPrimaryDisplayScale(
+      homogeneousScaleLayout.replace('rdpMonitor[0]: scale:1, client scale :1.00\n', ''),
+    ),
+    null,
+  );
 });
 
 test('does not force a process-wide scale for a mixed-scale monitor layout', () => {

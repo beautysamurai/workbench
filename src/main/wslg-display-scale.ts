@@ -128,7 +128,7 @@ function parseWslgLayoutScale(log: string): WslgLayoutScale {
       `rdpMonitor\\[${monitorIndex}\\]: scale:[^,\\r\\n]+,\\s*client(?:\\s+scale|Scale)\\s*:\\s*([0-9.]+)`,
     );
     const percentage = Number(block.match(percentagePattern)?.[1]);
-    const clientScale = Number(block.match(clientScalePattern)?.[1] ?? 1);
+    const clientScale = Number(block.match(clientScalePattern)?.[1]);
     const residualScale = percentage / 100 / clientScale;
     if (
       !Number.isInteger(percentage)

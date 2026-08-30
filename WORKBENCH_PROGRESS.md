@@ -966,3 +966,24 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and publish the backward-scan fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
 - Blocker: none established.
+
+### 2026-08-30 17:03 JST — P1-004 accepted missing client-scale review finding
+
+**Final-head delivery evidence**
+
+- Commit `970f179` passed both Linux verification jobs in 17–19 seconds and both Windows packaging jobs in 1 minute 54 seconds and 2 minutes.
+- The automatic new-head review request remained queued without a submission. `gh pr edit 4 --add-reviewer @copilot` was accepted but did not start a visible run, so the documented `@codex review` trigger was posted. The connector acknowledged it with 👀 and a running summary for exact head `970f179`.
+- Manual automated review `5060285941` completed on exact head `970f179` and opened one P2 thread (`discussion_r3888823814`): a missing or nonnumeric Weston `client scale` field was silently defaulted to 1, allowing an unknown applied compositor scale to become a process-wide override.
+- Disposition: accepted. Every factor used to compute the residual Chromium scale must be present and numeric; unknown compositor state is indeterminate, not an implicit identity scale.
+
+**Scoped correction and verification**
+
+- Removed the client-scale fallback. A missing field or a value outside the numeric parser now produces `NaN`, fails the existing finite residual validation, and keeps the complete-looking layout indeterminate.
+- Focused parser regressions cover both a nonnumeric `client scale :unknown` value and an absent client-scale line in one monitor block.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; portable ran 12 files and full verification ran 13 files including WSL integration.
+- Current real Weston detection still printed `1.5` from the production build, confirming the active valid layout contains the required client-scale records.
+
+**Next action**
+
+- Commit and publish the strict client-scale parser fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.
