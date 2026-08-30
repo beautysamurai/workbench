@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow, Menu, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, screen, shell } from 'electron';
 import { CodexAppServerManager } from './codex-app-server';
 import { registerIpc } from './ipc';
 import { WorkbenchStore } from './store';
@@ -21,8 +21,38 @@ const configuredWslgDisplayScale = configureWslgDisplayScale(app.commandLine);
 let mainWindow: BrowserWindow | null = null;
 let disposeIpc: (() => void) | null = null;
 let disposeWslgScaleWatch: (() => void) | null = null;
+let wslgScalePromptOpen = false;
 let codex: CodexAppServerManager | null = null;
 let terminals: TerminalManager | null = null;
+
+async function promptForWslgScaleRestart(): Promise<void> {
+  if (wslgScalePromptOpen) return;
+  wslgScalePromptOpen = true;
+  try {
+    const options = {
+      type: 'info' as const,
+      title: 'Workbench',
+      message: 'Display scaling changed',
+      detail: [
+        'Restart Workbench to realign fullscreen and pointer input.',
+        'Running terminal commands and Codex turns will stop, and unsent prompt text will be lost.',
+        'Choose Later to finish your work and restart Workbench manually.',
+      ].join(' '),
+      buttons: ['Restart now', 'Later'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    };
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (result.response !== 0) return;
+    app.relaunch();
+    app.quit();
+  } finally {
+    wslgScalePromptOpen = false;
+  }
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -88,8 +118,9 @@ app.whenReady().then(() => {
       },
       configuredWslgDisplayScale,
       () => {
-        app.relaunch();
-        app.quit();
+        void promptForWslgScaleRestart().catch((error: unknown) => {
+          console.error('Unable to show the display-scale restart prompt:', error);
+        });
       },
     );
   }

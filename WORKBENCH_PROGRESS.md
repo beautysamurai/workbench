@@ -8,7 +8,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
 - **Next task:** P1-004 — complete correction pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; consistently scaled WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, mixed-scale layouts retain Electron defaults, runtime scale changes request a clean recalibration, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
+- **Verified state:** P1-004 is locally complete; consistently scaled WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, mixed-scale layouts retain Electron defaults, runtime scale changes offer a user-controlled recalibration without unexpectedly interrupting active work, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
 - **Next action:** Publish the runtime display-scale correction, then complete final-head CI and automated review
 - **Genuine blocker:** None established
 
@@ -851,4 +851,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and publish the accepted runtime correction, resolve the review thread with commit and verification evidence, then complete final-head CI and automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 14:56 JST — P1-004 accepted active-work relaunch review finding
+
+**Final-head review evidence**
+
+- Commit `008eecf` passed both Linux verification jobs in 15–16 seconds and both Windows packaging jobs in 1 minute 45 seconds and 2 minutes 19 seconds.
+- Automated Codex review `5060066014` completed on exact head `008eecf` and opened one P2 thread (`discussion_r3888595914`): the automatic display-scale relaunch could stop an active terminal command or Codex turn and discard renderer-only composer text without warning.
+- Disposition: accepted. Display recalibration is important, but an ordinary monitor or scaling change must not silently destroy active work.
+
+**Scoped correction**
+
+- A confirmed effective WSLg scale change now opens a Workbench restart prompt instead of quitting automatically. **Later** is the safe default and explicitly lets the user finish work and restart manually; **Restart now** warns that running terminals, Codex turns, and unsent prompt text will be stopped or lost before using the normal relaunch/quit cleanup.
+- The display watcher remains subscribed after a deferred restart, suppresses duplicate notifications for the same effective scale, reports a genuinely different subsequent scale, and resets its notification state if the layout returns to the process's calibrated scale.
+- Focused tests now verify same-scale suppression, transient partial-record recovery, one notification per changed scale, continued watching after deferral, explicit disposal, and non-WSLg gating. README, task evidence, and changelog disclose the user-controlled recalibration behavior.
+
+**Verification after correction**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused parser, startup configuration, transient-layout, changed-scale deduplication, deferral, and cleanup cases passed; exit `0`. |
+| passed | `npm run check && npm run build && git diff --check` | Strict main/renderer type checks, all 13 compiled test files including WSL integration, production compilation/assets, and whitespace validation passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The actual app initialized the persistent display watcher and restart-prompt wiring and remained running under WSLg until intentional SIGINT. Existing DBus/GPU warnings were non-fatal. |
+| passed | `pgrep -af '[e]lectron.*(/tmp/workbench-p1-004-pointer|electron \\.)'` | Exit `1` with no output confirmed the bounded launch left no Electron process. |
+| not run | physically change Windows scale or attach/remove a monitor while a terminal command, Codex turn, or draft is active | Altering the host display configuration was not necessary for the scoped review correction. The watcher decision paths and deferred-listener lifecycle are covered deterministically; the Electron dialog integration is type-checked and initialized by the real app launch. |
+
+**Next action**
+
+- Commit and publish the accepted active-work correction, resolve the review thread with commit and verification evidence, then complete another final-head CI and automated re-review.
 - Blocker: none established.

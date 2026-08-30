@@ -154,6 +154,7 @@ export function watchWslgDisplayScaleChanges(
 
   const effectiveInitialScale = initialScale ?? 1;
   let candidateScale: number | undefined;
+  let reportedScale: number | undefined;
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
   let unsubscribe = () => {};
@@ -177,6 +178,7 @@ export function watchWslgDisplayScaleChanges(
     }) ?? 1;
     if (detectedScale === effectiveInitialScale) {
       candidateScale = undefined;
+      reportedScale = undefined;
       return;
     }
 
@@ -188,7 +190,9 @@ export function watchWslgDisplayScaleChanges(
       return;
     }
 
-    dispose();
+    candidateScale = undefined;
+    if (reportedScale === detectedScale) return;
+    reportedScale = detectedScale;
     onScaleChanged();
   };
 

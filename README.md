@@ -152,7 +152,7 @@ Do not point Workbench or a cloud-connected Codex account at employer source cod
 | `Esc` | Exit fullscreen, or close the command palette or modal |
 | `F12` | Toggle Electron developer tools |
 
-The main layout adapts down to a 720×520 window. At compact widths, the context tray is hidden and the Codex thread list becomes a horizontal rail so the active workspace remains usable. When Workbench is launched directly in WSLg and every reported monitor has the same effective scale, it also reconciles unapplied fractional Windows display scaling before Electron starts so fullscreen geometry and pointer input stay aligned. Mixed-scale monitor layouts retain Electron's per-display defaults instead of applying one monitor's scale globally. If the effective WSLg scale changes while Workbench is running, the app cleanly relaunches once to recalculate that startup setting.
+The main layout adapts down to a 720×520 window. At compact widths, the context tray is hidden and the Codex thread list becomes a horizontal rail so the active workspace remains usable. When Workbench is launched directly in WSLg and every reported monitor has the same effective scale, it also reconciles unapplied fractional Windows display scaling before Electron starts so fullscreen geometry and pointer input stay aligned. Mixed-scale monitor layouts retain Electron's per-display defaults instead of applying one monitor's scale globally. If the effective WSLg scale changes while Workbench is running, the app offers to restart and recalculate that startup setting. Choosing **Later** keeps active commands and drafts in place so you can finish work and restart manually.
 
 ## Development
 

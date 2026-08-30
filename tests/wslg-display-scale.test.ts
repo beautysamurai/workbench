@@ -95,10 +95,10 @@ test('configures Chromium scale without overriding an explicit user switch', () 
   assert.deepEqual(appended, []);
 });
 
-test('requests one clean relaunch when the effective WSLg scale changes', async () => {
+test('reports each confirmed WSLg scale once and keeps watching when deferred', async () => {
   let listener: () => void = () => { assert.fail('display change listener was not registered'); };
   let layout = homogeneousScaleLayout;
-  let relaunches = 0;
+  let notifications = 0;
   let unsubscribes = 0;
   const dispose = watchWslgDisplayScaleChanges(
     (nextListener) => {
@@ -106,7 +106,7 @@ test('requests one clean relaunch when the effective WSLg scale changes', async 
       return () => { unsubscribes += 1; };
     },
     1.5,
-    () => { relaunches += 1; },
+    () => { notifications += 1; },
     {
       ...wslgOptions,
       debounceMs: 0,
@@ -116,32 +116,44 @@ test('requests one clean relaunch when the effective WSLg scale changes', async 
 
   listener();
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(relaunches, 0);
+  assert.equal(notifications, 0);
 
   layout = mixedScaleLayout;
   listener();
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(relaunches, 1);
+  assert.equal(notifications, 1);
+  assert.equal(unsubscribes, 0);
+
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(notifications, 1);
+
+  layout = homogeneousScaleLayout.replaceAll(
+    'desktopScaleFactor:150',
+    'desktopScaleFactor:125',
+  );
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(notifications, 2);
+  dispose();
   assert.equal(unsubscribes, 1);
 
   listener();
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(relaunches, 1);
-  dispose();
-  assert.equal(unsubscribes, 1);
+  assert.equal(notifications, 2);
 });
 
 test('waits out a partial WSLg layout before deciding the scale changed', async () => {
   let listener: () => void = () => { assert.fail('display change listener was not registered'); };
   let reads = 0;
-  let relaunches = 0;
+  let notifications = 0;
   const dispose = watchWslgDisplayScaleChanges(
     (nextListener) => {
       listener = nextListener;
       return () => {};
     },
     1.5,
-    () => { relaunches += 1; },
+    () => { notifications += 1; },
     {
       ...wslgOptions,
       debounceMs: 0,
@@ -157,7 +169,7 @@ test('waits out a partial WSLg layout before deciding the scale changed', async 
   listener();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(reads, 2);
-  assert.equal(relaunches, 0);
+  assert.equal(notifications, 0);
   dispose();
 });
 
