@@ -96,12 +96,28 @@ export interface CodexRateLimits {
 }
 
 export type ProjectTaskState = 'pending' | 'in progress' | 'blocked' | 'done';
+export type ProjectTaskPriority = 'P0' | 'P1' | 'P2' | 'P3';
+
+export interface ProjectTaskAttachment {
+  path: string;
+  mediaType: string;
+}
+
+export interface ProjectTaskImageDraft {
+  name: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}
 
 export interface ProjectTask {
   id: string;
   title: string;
   state: ProjectTaskState;
+  priority: ProjectTaskPriority;
   objective: string;
+  parentId: string | null;
+  acceptanceCriteria: string[];
+  attachments: ProjectTaskAttachment[];
 }
 
 export interface ProjectSystemFile {
@@ -113,12 +129,17 @@ export interface ProjectSystemFile {
 export interface ProjectSystemStatus {
   files: ProjectSystemFile[];
   tasks: ProjectTask[];
+  nextTaskId: string;
   ready: boolean;
 }
 
 export interface ProjectTaskDraft {
   title: string;
   objective?: string;
+  priority: ProjectTaskPriority;
+  parentId?: string | null;
+  acceptanceCriteria?: string[];
+  images?: ProjectTaskImageDraft[];
 }
 
 export interface WorkbenchSettings {

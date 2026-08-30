@@ -36,7 +36,7 @@ The preload bridge maps a fixed method list to IPC channels. It does not expose 
 
 ### Main process
 
-The main process validates workspace IDs through the persistent store before each privileged operation. Context reads are additionally checked using both normalized paths and WSL `realpath` values. Project-workflow operations resolve the workspace root and each fixed Markdown filename before reading or writing, and reject symlinks that escape the root.
+The main process validates workspace IDs through the persistent store before each privileged operation. Context reads are additionally checked using both normalized paths and WSL `realpath` values. Project-workflow operations resolve the workspace root and each fixed Markdown filename before reading or writing, require regular files, and reject symlinks that escape the root. Task-image bytes are independently checked for count, size, basic container structure/dimensions, and PNG/JPEG/WebP signatures, then streamed through a non-profile shell's stdin to a generated path under a resolved `.workbench/task-images/` directory.
 
 ### Codex
 
@@ -89,7 +89,9 @@ The main window starts at 1520×960 and can restore as small as 720×520. Respon
 
 ## Markdown project workflow
 
-`project-system.ts` treats `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` as the durable project workflow. Initialization creates only missing files. Task additions are normalized into a fixed Markdown block and appended to `TASKS.md`; the renderer parses those blocks into the dashboard queue. The main process uses fixed filenames, `realpath`, and workspace-boundary checks so the preload API cannot select arbitrary files.
+`project-system.ts` treats `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` as the durable project workflow. Initialization creates only missing files. New task IDs use the `WB-NNN` namespace and seed from the largest concrete numeric suffix already in the queue. Each assignment atomically advances a persistent `.workbench/task-sequence` high-water counter while holding a stable `flock` file, so deletion does not reuse IDs and separate Workbench processes cannot reserve the same value; an in-process queue also avoids redundant local contention. Reservation gaps are allowed when a later image or Markdown write fails. Priority, parent ID, acceptance criteria, and generated attachment paths are normalized into a fixed Markdown block appended to `TASKS.md`. Legacy task IDs remain unchanged, with P0–P3 inferred from those IDs when no explicit priority exists.
+
+The renderer derives an arbitrary-depth tree from the flat parent-ID model and keeps duplicate, orphaned, or cyclic hand-edited tasks visible with a structural warning. Image files never cross the bridge as DOM `File` objects: the renderer sends typed bytes through the task-specific API, and the main process writes those bytes only beneath the selected workspace after signature, size, `realpath`, and symlink checks. It uses fixed generated filenames and stdin rather than placing image content in a shell command or process argument.
 
 ## Codex message flow
 
@@ -108,7 +110,7 @@ The renderer treats item lifecycle events as the source of truth and also tracks
 - Missing WSL or Codex is surfaced in the environment status instead of crashing the renderer.
 - A failed Codex connection can be retried from the Codex tab.
 - Unavailable model or usage metadata leaves the main workspace usable and exposes a retry control.
-- Missing Markdown workflow files are shown explicitly and can be initialized without replacing existing files; unsafe symlinks are refused.
+- Missing Markdown workflow files are shown explicitly and can be initialized without replacing existing files; unsafe/non-regular project files and unsafe task metadata or image paths are refused.
 - A failed experimental PTY starts a direct WSL shell.
 - An unreadable context file creates a warning inside the generated package.
 - Oversized context files are truncated and labeled.

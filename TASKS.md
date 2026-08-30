@@ -29,14 +29,16 @@ States: `pending` · `in progress` · `blocked` · `done`
   - [x] Model should be selected easily.
   - [x] For a coding project, it should load markdown system and also create such a system by default. And should have a clear and easy slot to write tasks and pop/offer task queues not from markdowns directly but on GUI.
   - [x] Should display the rest usage limit.
-- **Evidence:** The installed Codex catalog now populates model and reasoning controls, and selected values flow into Codex thread and turn requests. New workspaces default to safe, non-overwriting setup of `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`; the dashboard parses the queue, adds tasks through a GUI form, and offers them to the Codex composer. Primary remaining usage and reset time load from app-server responses and rolling notifications. Focused tests, strict checks, production build, live launch, and an offscreen production-renderer journey all passed.
-- **Hypothesis:** Confirmed. A typed metadata bridge plus a fixed-filename, `realpath`-guarded Markdown service provides the requested UX without making renderer file access broad or replacing Markdown as the durable project record.
-- **Next action:** P0-003 — Establish a trustworthy automated verification baseline.
+  - [x] The task composer supports pasted images, explicit priority, and automatically increasing IDs independent from priority.
+  - [x] Tasks can be structurally nested.
+- **Evidence:** The installed Codex catalog populates thread-scoped model and reasoning controls, while usage and reset time come from app-server responses and notifications. New workspaces safely initialize the Markdown workflow, and the task composer provides explicit P0–P3 priority, optional parent and acceptance-criteria fields, plus paste/drop/file image previews. Durable locked `WB-NNN` allocation prevents reuse and cross-process collisions; parent metadata renders as a semantic tree; and bounded PNG/JPEG/WebP files stay under `.workbench/task-images/`. Focused success, failure, concurrency, renderer, launch, strict-check, and production-build verification passed.
+- **Hypothesis:** Confirmed. Typed app-server metadata plus a fixed-filename, `realpath`-guarded Markdown service provides the requested project UX without broad renderer file access. Flat parent IDs preserve human-editable task records while a derived renderer tree supplies arbitrary nesting; a stable workspace lock, atomic sequence reservation, and stdin-only image writes safely support IDs and attachments.
+- **Next action:** P0-004 — Review main/preload/renderer and IPC security.
 - **Blocker:** None established.
 
 ### P1-004 — GUI bugfix
 
-- **State:** in progress
+- **State:** done
 - **Objective:** To fix GUI bugs
 - **Reported or observed symptom:** Under 150% Windows scaling, WSLg fullscreen did not align with the top edge and mouse hit targets shifted below the visible pointer.
 - **Acceptance criteria:**
@@ -44,7 +46,7 @@ States: `pending` · `in progress` · `blocked` · `done`
   - [x] Model should be determined at the terminal level, not globally.
 - **Evidence:** F11 and Escape round-trip native fullscreen through an explicit normal-bounds snapshot. Workbench now also reconciles WSLg's unapplied fractional desktop scale before Electron becomes ready when every reported monitor agrees: on the reported 150% display, both the Windows surface and Electron renderer reached `(0,0) 2560×1440`, seven real pointer clicks retained exact y-coordinates, and the original 900×700 bounds restored. Mixed-scale layouts safely retain Electron defaults. A confirmed runtime scale change offers a restart for recalibration, with a safe **Later** path that does not interrupt active commands or discard drafts unexpectedly. Model/reasoning choices remain keyed by Codex thread and were previously verified with two independent thread settings. The focused scale regression, all 13 test files, strict checks, production build, patched Electron launch, and real Windows-pointer journey passed.
 - **Hypothesis:** Confirmed root causes: WSLg exposed a 3840×2160 XWayland display at scale 1 while its Windows RDP surface used 2560×1440 coordinates at 150%, native fullscreen retained fullscreen-sized bounds after exit, the original fixed layout prevented a genuinely small window, and model ownership was persisted at workspace scope.
-- **Next action:** Publish the runtime display-scale correction, then complete final-head CI and automated review.
+- **Next action:** Complete P0-002 structured-task delivery, then begin P0-004 — Review main/preload/renderer and IPC security.
 - **Blocker:** None established.
 
 
@@ -85,3 +87,13 @@ States: `pending` · `in progress` · `blocked` · `done`
 - Use `blocked` only under the genuine-blocker rules in `AGENTS.md`.
 - Split broad discoveries into small outcome-based tasks instead of silently expanding scope.
 - Do not use this board as the evidence log; append detailed session evidence to `WORKBENCH_PROGRESS.md`.
+
+### WB-005 — Terminal should be the same format as usual.
+
+- **State:** pending
+- **Priority:** P0
+- **Objective:** Terminal session in this app is as useful as the normal one.
+- **Acceptance criteria:**
+  - [ ] - Terminal session suddenly exits with code 124
+  - [ ] - Terminal shows collapsed characters, not supporting zsh ui.
+  - [ ] - There's a block to send messages but it disable us to choose options displayed in terminal. Should be like the usual terminal block.

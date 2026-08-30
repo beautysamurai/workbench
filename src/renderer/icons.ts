@@ -24,6 +24,7 @@ const paths: Record<string, string> = {
   edit: '<path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/><path d="m13.5 7 3.5 3.5"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"/>',
   file: '<path d="M6 2h8l4 4v16H6V2Z"/><path d="M14 2v5h5"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m4 17 5-5 3 3 3-4 5 6"/>',
   note: '<path d="M5 3h14v18H5V3Z"/><path d="M8 8h8m-8 4h8m-8 4h5"/>',
   link: '<path d="m10 13 4-4m-6 8H6a4 4 0 0 1 0-8h3m6-2h3a4 4 0 0 1 0 8h-3"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',

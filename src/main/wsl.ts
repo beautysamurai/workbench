@@ -22,6 +22,7 @@ interface CaptureOptions {
   cwd?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  input?: Uint8Array;
 }
 
 function decodeOutput(buffer: Buffer): string {
@@ -52,12 +53,15 @@ export function captureProcess(
       cwd: options.cwd,
       env: options.env,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
+
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(options.input);
 
     child.stdout.on('data', (chunk: Buffer) => stdout.push(Buffer.from(chunk)));
     child.stderr.on('data', (chunk: Buffer) => stderr.push(Buffer.from(chunk)));
@@ -89,14 +93,17 @@ export async function runWslCommand(
   distro: string,
   command: string,
   timeoutMs = 120_000,
+  input?: Uint8Array,
+  useLoginShell = true,
 ): Promise<CommandResult> {
+  const plainShellArgs = ['--noprofile', '--norc', '-c', command];
   if (process.platform !== 'win32') {
-    return captureProcess('bash', ['-lc', command], { timeoutMs });
+    return captureProcess('bash', useLoginShell ? ['-lc', command] : plainShellArgs, { timeoutMs, input });
   }
   return captureProcess(
     'wsl.exe',
-    ['-d', distro, '--exec', 'bash', '-lic', command],
-    { timeoutMs },
+    ['-d', distro, '--exec', 'bash', ...(useLoginShell ? ['-lic', command] : plainShellArgs)],
+    { timeoutMs, input },
   );
 }
 

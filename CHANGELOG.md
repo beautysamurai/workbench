@@ -11,10 +11,12 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Added Codex model and reasoning-effort selectors backed by the installed Codex catalog.
 - Added remaining primary Codex usage and reset-time indicators to the dashboard and Codex toolbar.
 - Added a Markdown-backed project task queue with safe default setup, GUI task entry, and a Send to Codex action.
+- Added explicit task priorities, optional parent/child structure and acceptance criteria, plus pasted, dropped, or selected reference images with previews.
 
 ### Changed
 
 - Model and reasoning-effort choices now belong to each Codex thread instead of the whole workspace.
+- New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while legacy priority-prefixed IDs remain supported.
 
 ### Fixed
 
@@ -25,4 +27,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 
 ### Security
 
-<!-- Example: - Fixed Electron startup under the documented Node/WSL environment. -->
+- Task images are structurally and size-validated and streamed into a fixed, workspace-contained attachment directory without placing their bytes in shell arguments; task IDs are reserved under a workspace lock.

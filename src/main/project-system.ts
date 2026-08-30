@@ -1,9 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import type {
   ProjectSystemFile,
   ProjectSystemStatus,
   ProjectTask,
+  ProjectTaskAttachment,
   ProjectTaskDraft,
+  ProjectTaskImageDraft,
+  ProjectTaskPriority,
   ProjectTaskState,
   Workspace,
 } from '../shared/types';
@@ -11,6 +13,12 @@ import { shellQuote } from './path-utils';
 import { runWslCommand } from './wsl';
 
 const PROJECT_FILES = ['AGENTS.md', 'TASKS.md', 'WORKBENCH_PROGRESS.md'] as const;
+const TASK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*-\d+$/;
+const PROJECT_IMAGE_DIRECTORY = '.workbench/task-images';
+const MAX_TASK_IMAGES = 4;
+const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+const projectTaskMutationQueues = new Map<string, Promise<ProjectSystemStatus>>();
 
 const PROJECT_TEMPLATES: Record<(typeof PROJECT_FILES)[number], string> = {
   'AGENTS.md': `# Project agent guide
@@ -25,10 +33,13 @@ States: \`pending\` · \`in progress\` · \`blocked\` · \`done\`
 
 Add tasks from Workbench or as headings in this form:
 
-### WB-001 — Example task
+### WB-NNN — Example task
 
 - **State:** pending
+- **Priority:** P2
 - **Objective:** Describe the desired outcome.
+- **Acceptance criteria:**
+  - [ ] Describe one observable completion condition.
 `,
   'WORKBENCH_PROGRESS.md': `# Project progress
 
@@ -48,6 +59,49 @@ function normalizeTaskState(value: string): ProjectTaskState {
   return 'pending';
 }
 
+function normalizeTaskPriority(value: unknown, legacyId = ''): ProjectTaskPriority {
+  const normalized = cleanSingleLine(value, 10).toUpperCase();
+  if (normalized === 'P0' || normalized === 'P1' || normalized === 'P2' || normalized === 'P3') return normalized;
+  const legacyPriority = /^(P[0-3])-/i.exec(legacyId)?.[1]?.toUpperCase();
+  return legacyPriority === 'P0' || legacyPriority === 'P1' || legacyPriority === 'P2' || legacyPriority === 'P3'
+    ? legacyPriority
+    : 'P2';
+}
+
+function parseAcceptanceCriteria(block: string): string[] {
+  const header = /^-\s+\*\*Acceptance criteria:\*\*\s*$/im.exec(block);
+  if (!header?.index && header?.index !== 0) return [];
+  const following = block.slice(header.index + header[0].length);
+  const section = following.split(/^-[ \t]+\*\*[^\n]+/m, 1)[0] ?? '';
+  return section.split(/\r?\n/).map((line) => {
+    const value = /^\s*-\s+\[[ xX]\]\s+(.+)$/.exec(line)?.[1];
+    return cleanSingleLine(value, 300);
+  }).filter(Boolean).slice(0, 20);
+}
+
+function mediaTypeForPath(value: string): string | null {
+  const extension = value.split('.').at(-1)?.toLowerCase();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'webp') return 'image/webp';
+  return null;
+}
+
+function parseAttachments(block: string): ProjectTaskAttachment[] {
+  const header = /^-\s+\*\*Attachments:\*\*\s*$/im.exec(block);
+  if (header?.index === undefined) return [];
+  const following = block.slice(header.index + header[0].length);
+  const section = following.split(/^-[ \t]+\*\*[^\n]+/m, 1)[0] ?? '';
+  return [...section.matchAll(/^\s*-\s+!\[[^\]]*\]\(([^)]+)\)\s*$/gm)].map((match) => {
+    const attachmentPath = cleanSingleLine(match[1], 500);
+    const mediaType = mediaTypeForPath(attachmentPath);
+    return mediaType && /^\.workbench\/task-images\/[A-Za-z][A-Za-z0-9_-]*-\d+-(?:0[1-4])\.(?:png|jpg|webp)$/.test(attachmentPath)
+      ? { path: attachmentPath, mediaType }
+      : null;
+  }).filter((attachment): attachment is ProjectTaskAttachment => attachment !== null).slice(0, MAX_TASK_IMAGES);
+}
+
 export function parseProjectTasks(markdown: string): ProjectTask[] {
   const heading = /^###\s+(.+?)\s+(?:—|-)\s+(.+)$/gm;
   const matches = [...markdown.matchAll(heading)];
@@ -55,22 +109,173 @@ export function parseProjectTasks(markdown: string): ProjectTask[] {
     const blockStart = (match.index ?? 0) + match[0].length;
     const blockEnd = matches[index + 1]?.index ?? markdown.length;
     const block = markdown.slice(blockStart, blockEnd);
-    const state = /-\s+\*\*State:\*\*\s*([^\n]+)/i.exec(block)?.[1] ?? 'pending';
-    const objective = /-\s+\*\*Objective:\*\*\s*([^\n]+)/i.exec(block)?.[1] ?? '';
+    const state = /^-\s+\*\*State:\*\*\s*([^\n]+)/im.exec(block)?.[1] ?? 'pending';
+    const priority = /^-\s+\*\*Priority:\*\*\s*([^\n]+)/im.exec(block)?.[1] ?? '';
+    const objective = /^-\s+\*\*Objective:\*\*\s*([^\n]+)/im.exec(block)?.[1] ?? '';
+    const id = cleanSingleLine(match[1], 100);
+    const parentId = cleanSingleLine(/^-\s+\*\*Parent:\*\*\s*([^\n]+)/im.exec(block)?.[1], 100);
     return {
-      id: cleanSingleLine(match[1], 100),
+      id,
       title: cleanSingleLine(match[2], 180),
       state: normalizeTaskState(state),
+      priority: normalizeTaskPriority(priority, id),
       objective: cleanSingleLine(objective, 500),
+      parentId: TASK_ID_PATTERN.test(parentId) ? parentId : null,
+      acceptanceCriteria: parseAcceptanceCriteria(block),
+      attachments: parseAttachments(block),
     };
-  }).filter((task) => task.id && task.title);
+  }).filter((task) => TASK_ID_PATTERN.test(task.id) && task.title);
 }
 
-export function formatProjectTask(task: ProjectTaskDraft, id = `WB-${randomUUID().slice(0, 8).toUpperCase()}`): string {
+export function nextProjectTaskId(tasks: ProjectTask[], highWater = 0): string {
+  const maximum = tasks.reduce((current, task) => {
+    const suffix = Number(/-(\d+)$/.exec(task.id)?.[1] ?? 0);
+    return Number.isSafeInteger(suffix) ? Math.max(current, suffix) : current;
+  }, highWater);
+  if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Task id sequence is invalid or exhausted.');
+  }
+  return `WB-${String(maximum + 1).padStart(3, '0')}`;
+}
+
+function cleanCriteria(values: unknown): string[] {
+  return Array.isArray(values)
+    ? values.map((value) => cleanSingleLine(value, 300)).filter(Boolean).slice(0, 20)
+    : [];
+}
+
+function hasValidProjectTaskParentChain(tasks: ProjectTask[], parentId: string): boolean {
+  const counts = new Map<string, number>();
+  const byId = new Map<string, ProjectTask>();
+  for (const task of tasks) {
+    counts.set(task.id, (counts.get(task.id) ?? 0) + 1);
+    if (!byId.has(task.id)) byId.set(task.id, task);
+  }
+  const seen = new Set<string>();
+  let currentId: string | null = parentId;
+  while (currentId) {
+    if (seen.has(currentId) || counts.get(currentId) !== 1) return false;
+    seen.add(currentId);
+    const current: ProjectTask | undefined = byId.get(currentId);
+    if (!current) return false;
+    currentId = current.parentId;
+  }
+  return true;
+}
+
+export function formatProjectTask(
+  task: ProjectTaskDraft,
+  id: string,
+  attachments: ProjectTaskAttachment[] = [],
+): string {
   const title = cleanSingleLine(task.title, 180);
   const objective = cleanSingleLine(task.objective, 500);
+  const priority = normalizeTaskPriority(task.priority);
+  const parentId = cleanSingleLine(task.parentId, 100);
+  const criteria = cleanCriteria(task.acceptanceCriteria);
   if (!title) throw new Error('Enter a task title.');
-  return `### ${id} — ${title}\n\n- **State:** pending\n- **Objective:** ${objective || title}\n`;
+  if (!TASK_ID_PATTERN.test(id)) throw new Error('Task id is invalid.');
+  if (parentId && !TASK_ID_PATTERN.test(parentId)) throw new Error('Parent task id is invalid.');
+  const lines = [
+    `### ${id} — ${title}`,
+    '',
+    '- **State:** pending',
+    `- **Priority:** ${priority}`,
+    ...(parentId ? [`- **Parent:** ${parentId}`] : []),
+    `- **Objective:** ${objective || title}`,
+  ];
+  if (criteria.length) {
+    lines.push('- **Acceptance criteria:**', ...criteria.map((criterion) => `  - [ ] ${criterion}`));
+  }
+  if (attachments.length) {
+    lines.push(
+      '- **Attachments:**',
+      ...attachments.map((attachment, index) => `  - ![Task image ${index + 1}](${attachment.path})`),
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+interface ValidatedProjectImage {
+  bytes: Uint8Array;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  extension: 'png' | 'jpg' | 'webp';
+}
+
+function startsWithBytes(bytes: Uint8Array, signature: number[], offset = 0): boolean {
+  return signature.every((value, index) => bytes[offset + index] === value);
+}
+
+function uint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] ?? 0) * 0x1000000)
+    + ((bytes[offset + 1] ?? 0) << 16)
+    + ((bytes[offset + 2] ?? 0) << 8)
+    + (bytes[offset + 3] ?? 0);
+}
+
+function uint32LittleEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0)
+    + ((bytes[offset + 1] ?? 0) << 8)
+    + ((bytes[offset + 2] ?? 0) << 16)
+    + ((bytes[offset + 3] ?? 0) * 0x1000000);
+}
+
+function validImageDimensions(width: number, height: number): boolean {
+  return width > 0 && height > 0 && width <= 16_384 && height <= 16_384 && width * height <= 40_000_000;
+}
+
+function isStructuredPng(bytes: Uint8Array): boolean {
+  if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return false;
+  const width = uint32BigEndian(bytes, 16);
+  const height = uint32BigEndian(bytes, 20);
+  return uint32BigEndian(bytes, 8) === 13
+    && startsWithBytes(bytes, [0x49, 0x48, 0x44, 0x52], 12)
+    && validImageDimensions(width, height)
+    && uint32BigEndian(bytes, bytes.length - 12) === 0
+    && startsWithBytes(bytes, [0x49, 0x45, 0x4e, 0x44], bytes.length - 8);
+}
+
+function isStructuredJpeg(bytes: Uint8Array): boolean {
+  if (bytes.length < 12 || !startsWithBytes(bytes, [0xff, 0xd8]) || !startsWithBytes(bytes, [0xff, 0xd9], bytes.length - 2)) return false;
+  const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  for (let index = 2; index + 8 < bytes.length; index += 1) {
+    if (bytes[index] !== 0xff || !startOfFrameMarkers.has(bytes[index + 1] ?? 0)) continue;
+    const segmentLength = ((bytes[index + 2] ?? 0) << 8) + (bytes[index + 3] ?? 0);
+    const height = ((bytes[index + 5] ?? 0) << 8) + (bytes[index + 6] ?? 0);
+    const width = ((bytes[index + 7] ?? 0) << 8) + (bytes[index + 8] ?? 0);
+    if (segmentLength >= 7 && index + 2 + segmentLength <= bytes.length && validImageDimensions(width, height)) return true;
+  }
+  return false;
+}
+
+function isStructuredWebp(bytes: Uint8Array): boolean {
+  if (bytes.length < 20
+    || !startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46])
+    || !startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)) return false;
+  const chunkType = String.fromCharCode(...bytes.slice(12, 16));
+  const declaredFileBytes = uint32LittleEndian(bytes, 4) + 8;
+  const declaredChunkBytes = uint32LittleEndian(bytes, 16);
+  return (chunkType === 'VP8 ' || chunkType === 'VP8L' || chunkType === 'VP8X')
+    && declaredFileBytes === bytes.length
+    && declaredChunkBytes <= bytes.length - 20;
+}
+
+export function validateProjectTaskImage(value: unknown): ValidatedProjectImage {
+  const candidate = (value ?? {}) as Partial<ProjectTaskImageDraft>;
+  if (!(candidate.bytes instanceof Uint8Array)) throw new Error('Pasted image data is invalid.');
+  const bytes = Uint8Array.from(candidate.bytes);
+  if (!bytes.length) throw new Error('Pasted image is empty.');
+  if (bytes.length > MAX_TASK_IMAGE_BYTES) throw new Error('Each task image must be 5 MB or smaller.');
+  if (isStructuredPng(bytes)) {
+    return { bytes, mediaType: 'image/png', extension: 'png' };
+  }
+  if (isStructuredJpeg(bytes)) {
+    return { bytes, mediaType: 'image/jpeg', extension: 'jpg' };
+  }
+  if (isStructuredWebp(bytes)) {
+    return { bytes, mediaType: 'image/webp', extension: 'webp' };
+  }
+  throw new Error('Task images must be PNG, JPEG, or WebP files.');
 }
 
 function rootSetup(workspace: Workspace): string[] {
@@ -81,8 +286,14 @@ function rootSetup(workspace: Workspace): string[] {
   ];
 }
 
-async function runProjectScript(workspace: Workspace, statements: string[]): Promise<string> {
-  const result = await runWslCommand(workspace.distro, [...rootSetup(workspace), ...statements].join('; '), 30_000);
+async function runProjectScript(workspace: Workspace, statements: string[], input?: Uint8Array): Promise<string> {
+  const result = await runWslCommand(
+    workspace.distro,
+    [...rootSetup(workspace), ...statements].join('; '),
+    30_000,
+    input,
+    false,
+  );
   if (result.code !== 0) {
     throw new Error(result.timedOut ? 'Project Markdown operation timed out.' : result.stderr.trim() || 'Project Markdown operation failed.');
   }
@@ -92,7 +303,7 @@ async function runProjectScript(workspace: Workspace, statements: string[]): Pro
 async function inspectFiles(workspace: Workspace): Promise<ProjectSystemFile[]> {
   const statements = PROJECT_FILES.flatMap((name) => [
     `target="$root_real/${name}"`,
-    `if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf '${name}\\tmissing\\n'; else target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) printf '${name}\\tpresent\\n' ;; *) printf '${name}\\tunsafe\\n' ;; esac; fi`,
+    `if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf '${name}\\tmissing\\n'; else target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) if [ -f "$target_real" ]; then printf '${name}\\tpresent\\n'; else printf '${name}\\tunsafe\\n'; fi ;; *) printf '${name}\\tunsafe\\n' ;; esac; fi`,
   ]);
   const output = await runProjectScript(workspace, statements);
   const states = new Map(output.split(/\r?\n/).filter(Boolean).map((line) => line.split('\t', 2) as [string, string]));
@@ -109,15 +320,45 @@ async function readTasks(workspace: Workspace): Promise<string> {
     'if [ ! -e "$target" ]; then exit 0; fi',
     'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
     'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
+    'if [ ! -f "$target_real" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
     'cat -- "$target_real"',
   ]);
+}
+
+function parseProjectTaskHighWater(value: string): number {
+  const normalized = value.trim();
+  if (!normalized) return 0;
+  if (!/^\d{1,16}$/.test(normalized)) throw new Error('Task id sequence is corrupt.');
+  const highWater = Number(normalized);
+  if (!Number.isSafeInteger(highWater) || highWater < 0 || highWater >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Task id sequence is invalid or exhausted.');
+  }
+  return highWater;
+}
+
+async function readProjectTaskHighWater(workspace: Workspace): Promise<number> {
+  const output = await runProjectScript(workspace, [
+    'workbench_dir="$root_real/.workbench"',
+    'if [ ! -e "$workbench_dir" ] && [ ! -L "$workbench_dir" ]; then exit 0; fi',
+    'if [ -L "$workbench_dir" ] || [ ! -d "$workbench_dir" ]; then printf "Task metadata directory is unsafe" >&2; exit 6; fi',
+    'workbench_dir_real=$(realpath -- "$workbench_dir") || { printf "Task metadata directory cannot be resolved" >&2; exit 6; }',
+    'case "$workbench_dir_real" in "$root_real"/*) ;; *) printf "Task metadata directory resolves outside the workspace" >&2; exit 6 ;; esac',
+    'counter="$workbench_dir_real/task-sequence"',
+    'if [ ! -e "$counter" ] && [ ! -L "$counter" ]; then exit 0; fi',
+    'if [ -L "$counter" ] || [ ! -f "$counter" ]; then printf "Task id sequence is unsafe" >&2; exit 6; fi',
+    'counter_real=$(realpath -- "$counter") || { printf "Task id sequence cannot be resolved" >&2; exit 6; }',
+    'case "$counter_real" in "$root_real"/*) ;; *) printf "Task id sequence resolves outside the workspace" >&2; exit 6 ;; esac',
+    'cat -- "$counter_real"',
+  ]);
+  return parseProjectTaskHighWater(output);
 }
 
 export async function inspectProjectSystem(workspace: Workspace): Promise<ProjectSystemStatus> {
   const files = await inspectFiles(workspace);
   const tasksFile = files.find((file) => file.name === 'TASKS.md');
   const tasks = tasksFile?.exists && tasksFile.safe ? parseProjectTasks(await readTasks(workspace)) : [];
-  return { files, tasks, ready: files.every((file) => file.exists && file.safe) };
+  const highWater = await readProjectTaskHighWater(workspace);
+  return { files, tasks, nextTaskId: nextProjectTaskId(tasks, highWater), ready: files.every((file) => file.exists && file.safe) };
 }
 
 export async function initializeProjectSystem(workspace: Workspace): Promise<ProjectSystemStatus> {
@@ -126,21 +367,181 @@ export async function initializeProjectSystem(workspace: Workspace): Promise<Pro
     statements.push(
       `target="$root_real/${name}"`,
       'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) ;; *) printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4 ;; esac; fi',
-      `if [ ! -e "$target" ]; then printf %s ${shellQuote(PROJECT_TEMPLATES[name])} > "$target"; fi`,
+      'if [ -e "$target" ] && [ ! -f "$target" ]; then printf "Project workflow path is not a regular file: %s" "$target" >&2; exit 4; fi',
+      `if [ ! -e "$target" ] && [ ! -L "$target" ]; then (umask 022; set -C; printf %s ${shellQuote(PROJECT_TEMPLATES[name])} > "$target") 2>/dev/null || true; fi`,
+      'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) ;; *) printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4 ;; esac; fi',
+      'if [ ! -f "$target" ]; then printf "Project workflow path is not a regular file: %s" "$target" >&2; exit 4; fi',
     );
   }
   await runProjectScript(workspace, statements);
   return inspectProjectSystem(workspace);
 }
 
-export async function addProjectTask(workspace: Workspace, draft: ProjectTaskDraft): Promise<ProjectSystemStatus> {
-  await initializeProjectSystem(workspace);
-  const task = formatProjectTask(draft);
-  await runProjectScript(workspace, [
-    'target="$root_real/TASKS.md"',
-    'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
-    'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
-    `printf '\\n%s\\n' ${shellQuote(task)} >> "$target_real"`,
+function projectWorkbenchDirectoryStatements(): string[] {
+  return [
+    'workbench_dir="$root_real/.workbench"',
+    'if [ -L "$workbench_dir" ]; then printf "Refusing unsafe task metadata directory" >&2; exit 6; elif [ -e "$workbench_dir" ] && [ ! -d "$workbench_dir" ]; then printf "Task metadata path is not a directory" >&2; exit 6; elif [ ! -e "$workbench_dir" ]; then mkdir -- "$workbench_dir" 2>/dev/null || true; fi',
+    'if [ -L "$workbench_dir" ] || [ ! -d "$workbench_dir" ]; then printf "Task metadata directory is unsafe" >&2; exit 6; fi',
+    'workbench_dir_real=$(realpath -- "$workbench_dir") || { printf "Task metadata directory cannot be resolved" >&2; exit 6; }',
+    'case "$workbench_dir_real" in "$root_real"/*) ;; *) printf "Task metadata directory resolves outside the workspace" >&2; exit 6 ;; esac',
+  ];
+}
+
+function projectTaskLockStatements(): string[] {
+  return [
+    ...projectWorkbenchDirectoryStatements(),
+    'command -v flock >/dev/null 2>&1 || { printf "Workspace task locking requires flock" >&2; exit 9; }',
+    'lock_file="$workbench_dir_real/task-sequence.lock"',
+    'if [ -L "$lock_file" ] || { [ -e "$lock_file" ] && [ ! -f "$lock_file" ]; }; then printf "Task id lock is unsafe" >&2; exit 9; fi',
+    'if [ ! -e "$lock_file" ]; then (umask 077; set -C; : > "$lock_file") 2>/dev/null || true; fi',
+    'if [ -L "$lock_file" ] || [ ! -f "$lock_file" ]; then printf "Task id lock is unsafe" >&2; exit 9; fi',
+    'lock_real=$(realpath -- "$lock_file") || { printf "Task id lock cannot be resolved" >&2; exit 9; }',
+    'case "$lock_real" in "$root_real"/*) ;; *) printf "Task id lock resolves outside the workspace" >&2; exit 9 ;; esac',
+    'exec 9<> "$lock_real" || { printf "Task id lock cannot be opened" >&2; exit 9; }',
+    'flock -w 10 -x 9 || { printf "Timed out waiting for the workspace task lock" >&2; exit 9; }',
+  ];
+}
+
+function projectImageDirectoryStatements(): string[] {
+  return [
+    ...projectWorkbenchDirectoryStatements(),
+    'image_dir="$workbench_dir_real/task-images"',
+    'if [ -L "$image_dir" ]; then printf "Refusing unsafe task-image directory" >&2; exit 6; elif [ -e "$image_dir" ] && [ ! -d "$image_dir" ]; then printf "Task-image path is not a directory" >&2; exit 6; elif [ ! -e "$image_dir" ]; then mkdir -- "$image_dir" 2>/dev/null || true; fi',
+    'if [ -L "$image_dir" ] || [ ! -d "$image_dir" ]; then printf "Task-image directory is unsafe" >&2; exit 6; fi',
+    'image_dir_real=$(realpath -- "$image_dir") || { printf "Task-image directory cannot be resolved" >&2; exit 6; }',
+    'case "$image_dir_real" in "$root_real"/*) ;; *) printf "Task-image directory resolves outside the workspace" >&2; exit 6 ;; esac',
+  ];
+}
+
+async function reserveProjectTaskId(workspace: Workspace, tasks: ProjectTask[]): Promise<string> {
+  const minimum = Number(/-(\d+)$/.exec(nextProjectTaskId(tasks))?.[1] ?? 1);
+  const output = await runProjectScript(workspace, [
+    ...projectTaskLockStatements(),
+    'counter="$workbench_dir_real/task-sequence"',
+    'if [ -L "$counter" ] || { [ -e "$counter" ] && [ ! -f "$counter" ]; }; then printf "Task id sequence is unsafe" >&2; exit 9; fi',
+    'sequence=0',
+    'if [ -f "$counter" ]; then sequence=$(cat -- "$counter"); fi',
+    'case "$sequence" in ""|*[!0-9]*) printf "Task id sequence is corrupt" >&2; exit 9 ;; esac',
+    'if [ "${#sequence}" -gt 16 ]; then printf "Task id sequence is exhausted" >&2; exit 9; fi',
+    `minimum=${minimum}`,
+    'next="$minimum"',
+    'if [ "$sequence" -ge "$next" ]; then next=$((sequence + 1)); fi',
+    'if [ "$next" -ge 9007199254740991 ]; then printf "Task id sequence is exhausted" >&2; exit 9; fi',
+    'temporary="$workbench_dir_real/.task-sequence.$$"',
+    'trap \'rm -f -- "$temporary"\' EXIT',
+    'if ! (umask 077; set -C; printf "%s\\n" "$next" > "$temporary") 2>/dev/null; then printf "Task id sequence could not be reserved" >&2; exit 9; fi',
+    'mv -fT -- "$temporary" "$counter" || { printf "Task id sequence could not be updated" >&2; exit 9; }',
+    'trap - EXIT',
+    'printf "%s\\n" "$next"',
   ]);
+  const reserved = parseProjectTaskHighWater(output);
+  return `WB-${String(reserved).padStart(3, '0')}`;
+}
+
+function taskImageFilename(attachment: ProjectTaskAttachment): string {
+  const filename = attachment.path.split('/').at(-1) ?? '';
+  if (!/^[A-Za-z][A-Za-z0-9_-]*-\d+-(?:0[1-4])\.(?:png|jpg|webp)$/.test(filename)) {
+    throw new Error('Task image filename is invalid.');
+  }
+  return filename;
+}
+
+async function writeProjectTaskImage(
+  workspace: Workspace,
+  attachment: ProjectTaskAttachment,
+  bytes: Uint8Array,
+): Promise<void> {
+  const filename = taskImageFilename(attachment);
+  await runProjectScript(workspace, [
+    ...projectImageDirectoryStatements(),
+    `target="$image_dir_real/${filename}"`,
+    'if [ -e "$target" ] || [ -L "$target" ]; then printf "Task image already exists" >&2; exit 7; fi',
+    `temporary="$image_dir_real/.${filename}.$$"`,
+    'trap \'rm -f -- "$temporary"\' EXIT',
+    'umask 077',
+    'set -C',
+    'cat > "$temporary" || { printf "Task image could not be written" >&2; exit 8; }',
+    'set +C',
+    `actual=$(wc -c < "$temporary"); if [ "$actual" -ne ${bytes.length} ]; then printf "Task image write was incomplete" >&2; exit 8; fi`,
+    'chmod 0644 "$temporary"',
+    'mv -n -- "$temporary" "$target"',
+    'if [ -e "$temporary" ]; then printf "Task image already exists" >&2; exit 7; fi',
+    'trap - EXIT',
+  ], bytes);
+}
+
+async function cleanupProjectTaskImages(
+  workspace: Workspace,
+  attachments: ProjectTaskAttachment[],
+): Promise<void> {
+  if (!attachments.length) return;
+  const filenames = attachments.map(taskImageFilename);
+  await runProjectScript(workspace, [
+    ...projectImageDirectoryStatements(),
+    ...filenames.map((filename) => `rm -f -- "$image_dir_real/${filename}"`),
+  ]);
+}
+
+async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft): Promise<ProjectSystemStatus> {
+  if (!draft || typeof draft !== 'object') throw new Error('Task details are invalid.');
+  if (draft.priority !== 'P0' && draft.priority !== 'P1' && draft.priority !== 'P2' && draft.priority !== 'P3') {
+    throw new Error('Choose a task priority.');
+  }
+  if (!cleanSingleLine(draft.title, 180)) throw new Error('Enter a task title.');
+  await initializeProjectSystem(workspace);
+  const existingTasks = parseProjectTasks(await readTasks(workspace));
+  const parentId = cleanSingleLine(draft.parentId, 100);
+  if (parentId && !hasValidProjectTaskParentChain(existingTasks, parentId)) {
+    throw new Error('Choose an existing parent task.');
+  }
+  const rawImages = Array.isArray(draft.images) ? draft.images : [];
+  if (rawImages.length > MAX_TASK_IMAGES) throw new Error(`Attach no more than ${MAX_TASK_IMAGES} images.`);
+  const images = rawImages.map(validateProjectTaskImage);
+  const totalBytes = images.reduce((total, image) => total + image.bytes.length, 0);
+  if (totalBytes > MAX_TASK_IMAGE_TOTAL_BYTES) throw new Error('Task images must total 12 MB or less.');
+  const taskId = await reserveProjectTaskId(workspace, existingTasks);
+  const attachments: ProjectTaskAttachment[] = images.map((image, index) => ({
+    path: `${PROJECT_IMAGE_DIRECTORY}/${taskId}-${String(index + 1).padStart(2, '0')}.${image.extension}`,
+    mediaType: image.mediaType,
+  }));
+  const written: ProjectTaskAttachment[] = [];
+  try {
+    for (const [index, image] of images.entries()) {
+      const attachment = attachments[index];
+      if (!attachment) continue;
+      await writeProjectTaskImage(workspace, attachment, image.bytes);
+      written.push(attachment);
+    }
+    const task = formatProjectTask({ ...draft, parentId: parentId || null }, taskId, attachments);
+    await runProjectScript(workspace, [
+      ...projectTaskLockStatements(),
+      'target="$root_real/TASKS.md"',
+      'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
+      'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
+      'if [ ! -f "$target_real" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
+      `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_real"; then printf "Task id already exists" >&2; exit 5; fi`,
+      `printf '\\n%s\\n' ${shellQuote(task)} >> "$target_real"`,
+    ]);
+  } catch (error) {
+    try {
+      await cleanupProjectTaskImages(workspace, written);
+    } catch (cleanupError) {
+      const primary = error instanceof Error ? error.message : String(error);
+      const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new Error(`${primary} Cleanup of newly written task images also failed: ${cleanup}`);
+    }
+    throw error;
+  }
   return inspectProjectSystem(workspace);
+}
+
+export function addProjectTask(workspace: Workspace, draft: ProjectTaskDraft): Promise<ProjectSystemStatus> {
+  const queueKey = `${workspace.distro}\u0000${workspace.root}`;
+  const previous = projectTaskMutationQueues.get(queueKey);
+  const operation = (previous?.catch(() => undefined) ?? Promise.resolve())
+    .then(() => addProjectTaskNow(workspace, draft));
+  projectTaskMutationQueues.set(queueKey, operation);
+  return operation.finally(() => {
+    if (projectTaskMutationQueues.get(queueKey) === operation) projectTaskMutationQueues.delete(queueKey);
+  });
 }

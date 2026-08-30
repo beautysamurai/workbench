@@ -15,7 +15,7 @@ It does not add another paid AI provider and it does not replace IntelliJ, ChatG
 - Native Codex threads through `codex app-server`
 - Per-thread Codex model and reasoning-effort selection with remaining primary usage shown in the app
 - Streaming agent messages, plans, shell output, diffs, reviews, and approval requests
-- A GUI task queue backed by `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`
+- A structured GUI task queue backed by `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`
 - Embedded persistent WSL shells, with a direct-process fallback when the experimental Codex PTY API is unavailable
 - Reusable workspace commands such as `./gradlew test`, `jupyter lab`, or `git status --short`
 - A context tray containing files, notes, and links
@@ -28,6 +28,7 @@ It does not add another paid AI provider and it does not replace IntelliJ, ChatG
 
 - Windows 11 or a recent Windows 10 build
 - WSL 2 with at least one Linux distribution
+- Standard WSL utilities including `bash`, `realpath`, and `flock`
 - Node.js 22 or newer on **Windows**
 - Codex CLI installed and authenticated inside the selected WSL distribution
 - IntelliJ IDEA is optional; its executable can be configured in Settings
@@ -90,6 +91,8 @@ A workspace can also point to a research or study folder; it does not need to be
 
 For new coding workspaces, **Set up the Markdown project workflow** is enabled by default. Workbench creates only missing `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` files; it never replaces existing guidance. The dashboard reads tasks from `TASKS.md`, lets you add queue entries through a form, and can place a selected task into the Codex composer.
 
+Workbench assigns new tasks sequential `WB-NNN` IDs independently from their explicit P0–P3 priority. A task can have a parent, acceptance criteria, and up to four pasted, dropped, or selected PNG, JPEG, or WebP reference images. Parent relationships render as a nested queue, while legacy `P0-001`-style IDs remain readable. Images are stored inside the selected workspace at `.workbench/task-images/` and referenced from `TASKS.md`. A small locked `.workbench/task-sequence` counter prevents ID reuse after deletion and coordinates multiple Workbench processes.
+
 ## How Codex integration works
 
 Workbench starts this process inside the selected WSL distribution:
@@ -135,6 +138,7 @@ Workbench deliberately starts conservatively:
 - Network access for sandboxed Codex commands is off by default.
 - Approval policy defaults to **Ask when needed** (`on-request` in the Codex app-server protocol).
 - Context files must lexically and physically resolve under the workspace root; symlink escapes are rejected.
+- Task reference images are size- and signature-checked in the main process, streamed without shell interpolation, and written only under the workspace's checked `.workbench/task-images/` directory.
 - Renderer code has no Node.js access. Electron runs with context isolation, renderer sandboxing, and a narrow preload bridge.
 - External links are opened in the system browser rather than inside the privileged application window.
 - The embedded terminal is an explicit user-controlled process and runs outside the Codex sandbox, just like a normal WSL terminal.
@@ -203,7 +207,7 @@ The checks performed for this release are recorded in [`docs/VALIDATION.md`](doc
 
 ## Data location
 
-Electron stores workspace configuration in its normal per-user application-data directory as `workbench-state.json`. No project files are copied into that state file. Context file contents are read only when you preview, copy, or save a context pack.
+Electron stores workspace configuration in its normal per-user application-data directory as `workbench-state.json`. No project files are copied into that state file. Context file contents are read only when you preview, copy, or save a context pack. Pasted task images and the task ID sequence metadata remain in the selected project under `.workbench/`.
 
 ## MVP limitations
 

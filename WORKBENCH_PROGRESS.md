@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
-- **Next task:** P1-004 — complete correction pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; consistently scaled WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, mixed-scale layouts retain Electron defaults, runtime scale changes offer a user-controlled recalibration without unexpectedly interrupting active work, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
-- **Next action:** Publish the runtime display-scale correction, then complete final-head CI and automated review
+- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at synchronization and delivery)
+- **Next task:** P0-004 — Review main/preload/renderer and IPC security
+- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
+- **Next action:** Verify P0-002 atop the latest merged `main`, publish its pull request, then begin P0-004
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -279,6 +279,63 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Task-board update: P2-003 added as done.
 - Changelog/docs update: no changelog entry; this is an engineering-process change rather than user-visible application behavior.
 - Remaining action: a repository administrator enables the GitHub branch ruleset; subsequent remotely delivered tasks exercise and record the loop.
+
+### 2026-08-29 20:25 JST — P0-002 completed structured task composition
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64 (`6.6.87.2-microsoft-standard-WSL2`)
+- Node version and executable: `v22.23.2`, `/home/kabes/.nvm/versions/node/v22.23.2/bin/node`
+- Package manager version and executable: npm `10.9.8`, `/home/kabes/.nvm/versions/node/v22.23.2/bin/npm`; npm selected from `package-lock.json`
+- Electron version: `44.0.0`
+- Commit / branch: `4da6c4b` / `main`
+- Initial `git status --short` summary: modified `TASKS.md` plus untracked user screenshot `image-3.png`; no pre-existing source changes
+
+**Observed behavior**
+
+- Goal or reported symptom: the task queue in `image-3.png` was flat, had no image-paste target or explicit priority field, exposed priority-like IDs, and did not automatically increase human-readable IDs.
+- Reproduction command: `npm run build:tests && node --test dist-test/tests/project-system.test.js`, followed by a bounded Node probe importing the compiled `parseProjectTasks` and `formatProjectTask` functions with the `P?-NNN` template and a new example task.
+- Expected: the placeholder is ignored; new IDs increase independently from priority; parent structure and task images are first-class fields.
+- Actual: the existing focused tests passed, but the probe parsed `P?-NNN` as a task and formatted the example with a random `WB-74F63700`-style UUID fragment. The shared task model had no priority, parent, criteria, or attachment fields, and the renderer showed a flat title/objective form.
+- Exit code and first meaningful error: exit `0`; this was a verified feature/data-model gap rather than a crashing command.
+
+**Diagnosis**
+
+- Classification: renderer UX, Markdown schema, main-process persistence, and cross-process ID integrity.
+- Evidence: `ProjectTask` only modeled ID/title/state/objective; `formatProjectTask` used `randomUUID`; the heading parser accepted the template; `runWslCommand` had no stdin path; and the renderer did not retain task-composer fields across normal rerenders.
+- Hypothesis: explicit structured Markdown fields plus a derived tree can keep `TASKS.md` human-editable, while main-process byte validation, fixed workspace paths, and durable locked sequence metadata can safely support images and monotonic IDs.
+- Disconfirming check: a placeholder or metadata-looking criterion would still become structure, simultaneous processes would receive the same ID, deletion would reuse an ID, an unsafe symlink would be written, failed appends would leave silent image orphans, a background refresh would erase the draft/caret, or the production renderer journey would fail.
+- Root cause: confirmed feature gap. The original task representation, UUID allocator, broad parser, and flat ephemeral form could not express or safely persist the requested workflow.
+
+**Changes**
+
+- Files changed: `src/shared/types.ts`, `src/main/project-system.ts`, `src/main/wsl.ts`, `src/renderer/main.ts`, `src/renderer/project-tasks.ts`, `src/renderer/mock-api.ts`, `src/renderer/icons.ts`, `src/renderer/styles.css`, `tests/project-system.test.ts`, `tests/project-tasks.test.ts`, `tsconfig.test.json`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `WORKBENCH_PROGRESS.md`, and `CHANGELOG.md`. User-created `image-3.png` was preserved unchanged.
+- Rationale: keep priority separate from identity, store a flat parent-ID model in Markdown, derive the hierarchy in a pure renderer helper, and keep all filesystem mutation behind the existing narrow project IPC boundary.
+- User-visible effect: the composer exposes P0–P3 priority, optional parent, objective, acceptance criteria, and a keyboard-focusable paste/drop/file image slot with retained previews. Tasks render as arbitrary-depth semantic nested lists, receive durable `WB-NNN` IDs, and send priority/parent/criteria/image context to Codex.
+- Security or compatibility considerations: legacy `P0-001` IDs remain readable and infer priority when no explicit field exists. New IDs reserve an atomic `.workbench/task-sequence` high-water value under a stable `flock`; duplicate/missing/cyclic parent chains are rejected for new children. The main process limits image count and bytes, checks container signatures/structure/dimensions, generates filenames, rejects unsafe or non-regular metadata paths, streams bytes via a non-profile shell's stdin, and surfaces cleanup failures.
+
+**Verification**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | Structured parse/format, placeholder exclusion, parent tree/cycle/orphan handling, byte-exact PNG persistence, invalid metadata/images, unsafe symlinks, append cleanup, deletion high-water behavior, and same-process/multiprocess ID contention passed. |
+| passed | `npm run check` | Strict main/renderer type checks and all nine compiled test files passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `node_modules/.bin/electron /tmp/workbench-structured-task-smoke.cjs` | Production renderer showed four priorities and automatic IDs, retained every draft field plus objective caret through refresh, previewed a pasted PNG, nested `WB-103` under its parent, advanced to `WB-104`, re-enabled controls, and included priority/parent/image context in the Codex prompt; exit `0`, no renderer failures or horizontal overflow at 1180px. |
+| passed | visual inspection of `/tmp/workbench-structured-task-overview.png` | Priority controls, labeled structure fields, paste target, nested task rows, and actions rendered legibly in the built application. |
+| passed | `npm start -- --enable-logging=stderr`, observed for 10 seconds, then Ctrl+C | Electron remained running under WSLg until the intentional SIGINT. DBus/GPU environment warnings were non-fatal. |
+| passed | post-launch `pgrep` checks for the Electron app, npm start, and `codex app-server` | Each returned exit `1` with no output; no smoke process remained. |
+| passed | `git diff --check` | No whitespace errors. |
+
+**Closeout**
+
+- Final `git status --short` / diff summary: task-scoped source, test, documentation, task-board, progress, and changelog changes remain uncommitted on `main`; the user's `image-3.png`, P1-004 acceptance criterion, and queue renumbering are preserved.
+- Remaining risks or unverified behavior: real Windows Snipping Tool clipboard input and the native `wsl.exe` byte transport were not available in this WSL session. Cross-process locking passed on the current Linux filesystem; coordination for two distributions simultaneously addressing the same DrvFS directory was not exercised. A local process that maliciously swaps checked paths at syscall boundaries remains outside the current shell-based hardening model.
+- Task-board update: P0-002 remains `done`; both newly supplied acceptance criteria are checked with current evidence.
+- Changelog/docs update: README and architecture describe task fields, images, sequence metadata, utilities, storage, and trust boundaries; the changelog records the completed user-visible and security changes.
+- Next action: P0-004 — establish a trustworthy automated verification baseline.
+- Blocker and smallest user action needed, if any: none.
 
 ### 2026-08-29 21:27 JST — P2-003 made pull-request delivery opt-out rather than opt-in
 
@@ -986,4 +1043,23 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and publish the strict client-scale parser fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
+
+### 2026-08-30 13:07 JST — P0-002 synchronized merged GUI work without losing structured tasks
+
+**Starting state and synchronization**
+
+- GitHub PR #3 was confirmed merged as `a2d8a1f`; `origin/main` advanced from `8994b32` to that merge commit.
+- The primary checkout was still on merged workflow branch `codex/automate-pr-delivery`, 17 commits behind `origin/main`, with the completed but unpublished P0-002 structured-task source/docs/tests plus user-created `image-3.png` and runtime `.workbench/` metadata.
+- Created `codex/p0-002-structured-tasks`, staged only the 16 documented P0-002 paths, and captured carrier `256aafd`. The screenshot and runtime metadata remained untracked and unchanged.
+- Rebasing the unpublished carrier onto `origin/main` produced expected conflicts in the changelog, task/progress records, renderer workspace cleanup, and project-system tests. Resolution retained P1-004 fullscreen/thread-model behavior and layered P0-002 task composition on top.
+- P0-003 had deliberately separated portable tests from WSL integration tests. The rebased resolution kept parser/image-byte validation portable and moved filesystem, symlink, permission, locking, and multiprocess cases into `tests/wsl/project-system.test.ts`, preventing regression of Windows CI portability.
+- The rebased branch head is `149b3e3`, exactly one commit ahead of merged `origin/main`.
+
+**Verification**
+
+- `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js dist-test/tests/wsl/project-system.test.js` passed all three focused files; exit `0`.
+- `npm run check` passed strict main/renderer type checks and all 13 compiled test files; exit `0`.
+- `npm run build` completed the production build and asset copy; exit `0`.
+- `npm start -- --enable-logging=stderr` launched the synchronized application under WSLg and remained running beyond 10 seconds. Only the known non-fatal WSL DBus/GPU warnings appeared.
+- Next action: publish the P0-002 branch and complete its pull-request CI/review loop, then begin P0-004.
 - Blocker: none established.
