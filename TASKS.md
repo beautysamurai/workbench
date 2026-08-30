@@ -36,7 +36,7 @@ States: `pending` · `in progress` · `blocked` · `done`
 
 ### P1-004 — GUI bugfix
 
-- **State:** done
+- **State:** blocked
 - **Objective:** To fix GUI bugs
 - **Reported or observed symptom:** Full screen mode doesn't work well.
 - **Acceptance criteria:**
@@ -44,8 +44,8 @@ States: `pending` · `in progress` · `blocked` · `done`
   - [x] Model should be determined at the terminal level, not globally.
 - **Evidence:** F11 and Escape now round-trip native fullscreen through an explicit normal-bounds snapshot; a production Electron journey returned exactly from fullscreen to 720×520 with no horizontal overflow. Model/reasoning choices are keyed by Codex thread, hydrated from start/resume responses, updated with `thread/settings/update`, and no longer stored on the workspace. Two production-renderer threads retained distinct Terra/medium and Sol/high choices. Focused tests, the installed app-server smoke, strict checks, and the production build passed.
 - **Hypothesis:** Confirmed root causes: the 1080×700 minimum and fixed three-column layout prevented a genuinely small restored window, WSLg Electron retained fullscreen-sized bounds after exit, and all Codex requests read one persisted workspace preference.
-- **Next action:** P0-004 — Review main/preload/renderer and IPC security.
-- **Blocker:** None established.
+- **Next action:** Authenticate GitHub CLI in this environment, push `codex/p1-004-gui-bugfix`, open the pull request, and complete applicable CI plus automated review.
+- **Blocker:** Local implementation is complete, but remote delivery requires GitHub authentication. HTTPS push has no credentials, GitHub SSH rejected the available identity, and GitHub CLI is not logged in.
 
 
 ## Queue

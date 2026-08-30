@@ -6,11 +6,11 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** None
-- **Next task:** P0-004 — Review main/preload/renderer and IPC security
+- **Active task:** P1-004 — GUI bugfix (`blocked` at remote delivery)
+- **Next task:** P1-004 — authenticate GitHub and complete pull-request delivery
 - **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread
-- **Next action:** Deliver P1-004 through its feature-branch pull request, complete applicable CI and automated review, then continue with P0-004
-- **Genuine blocker:** None established
+- **Next action:** Authenticate GitHub CLI, push `codex/p1-004-gui-bugfix`, open its pull request, and complete applicable CI plus automated review
+- **Genuine blocker:** No GitHub credentials are available to HTTPS, SSH, or GitHub CLI in this environment
 
 ## Imported historical context — not current verification
 
@@ -682,3 +682,22 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
 - Merge of PR #1 remains separately authorized and was not performed.
 - Blocker: none established while the review fix and final verification remain actionable.
+
+### 2026-08-30 09:48 JST — P1-004 remote delivery blocked on GitHub authentication
+
+**Local delivery state**
+
+- The reviewed P1-004 patch was committed as `2e61424` (`Fix compact window and thread model scope`) on `codex/p1-004-gui-bugfix`.
+- A post-commit `git fetch --prune origin` succeeded. The branch remains exactly one scoped commit ahead of current `origin/main`; `git log --oneline origin/main..HEAD`, `git diff --name-status origin/main...HEAD`, and `git diff --check origin/main...HEAD` all passed their ancestry/path/whitespace audit.
+- The dirty primary checkout and its unrelated work remain untouched.
+
+**Blocked remote actions**
+
+- `git push --set-upstream origin codex/p1-004-gui-bugfix` exited `128`: `fatal: could not read Username for 'https://github.com': No such device or address`.
+- The safe non-interactive fallback `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -T git@github.com` failed with `Permission denied (publickey)`.
+- The portable GitHub CLI reports no authenticated GitHub host, so it cannot create the pull request or inspect CI/review state.
+- No branch was pushed and no pull request was created; CI and automated review have therefore not run.
+
+**Smallest user action**
+
+- Authenticate GitHub CLI for `beautysamurai/workbench` in this environment (the available portable command is `/tmp/gh_2.45.0_linux_amd64/bin/gh auth login`), then resume P1-004. Workbench can continue from commit `2e61424` without repeating implementation or local verification.
