@@ -3,6 +3,7 @@ import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 const WSLG_LOG_PATH = '/mnt/wslg/weston.log';
 const MAX_LOG_BYTES = 512 * 1024;
 const DEFAULT_SCALE_CHANGE_DEBOUNCE_MS = 500;
+const SCALE_CHANGE_SETTLE_READS = 5;
 
 export const DEVICE_SCALE_FACTOR_SWITCH = 'force-device-scale-factor';
 
@@ -162,6 +163,8 @@ export function watchWslgDisplayScaleChanges(
   const effectiveInitialScale = initialScale ?? 1;
   let candidateScale: number | undefined;
   let reportedScale: number | undefined;
+  let settleReadsRemaining = 0;
+  let confirmationExtended = false;
   let cancelInspection: (() => void) | null = null;
   let stopped = false;
   let unsubscribe = () => {};
@@ -183,9 +186,14 @@ export function watchWslgDisplayScaleChanges(
       env,
       platform,
     }) ?? 1;
+    settleReadsRemaining -= 1;
     if (detectedScale === effectiveInitialScale) {
       candidateScale = undefined;
-      reportedScale = undefined;
+      if (settleReadsRemaining > 0) {
+        cancelInspection = schedule(inspectScale, debounceMs);
+      } else {
+        reportedScale = undefined;
+      }
       return;
     }
 
@@ -193,7 +201,10 @@ export function watchWslgDisplayScaleChanges(
     // single null result can be a transient partial record rather than scale 1.
     if (candidateScale !== detectedScale) {
       candidateScale = detectedScale;
-      cancelInspection = schedule(inspectScale, debounceMs);
+      if (settleReadsRemaining > 0 || !confirmationExtended) {
+        confirmationExtended = settleReadsRemaining <= 0;
+        cancelInspection = schedule(inspectScale, debounceMs);
+      }
       return;
     }
 
@@ -206,6 +217,8 @@ export function watchWslgDisplayScaleChanges(
   const handleDisplayChange = (): void => {
     if (stopped) return;
     candidateScale = undefined;
+    settleReadsRemaining = SCALE_CHANGE_SETTLE_READS;
+    confirmationExtended = false;
     cancelInspection?.();
     cancelInspection = schedule(inspectScale, debounceMs);
   };

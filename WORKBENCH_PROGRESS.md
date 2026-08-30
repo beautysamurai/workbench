@@ -898,3 +898,19 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run check && npm run build && git diff --check` passed strict compilation, all 13 full test files including WSL integration, production compilation/assets, and whitespace validation; exit `0`.
 - Next action: commit and push the deterministic test correction, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-08-30 15:38 JST — P1-004 accepted stale-first-read review finding
+
+**Automated review evidence**
+
+- Automated Codex review `5060128287` completed on exact head `afd5b23` while the Windows timer-test correction was in progress and opened one P2 thread (`discussion_r3888663281`): Electron can emit its display event before Weston appends the new layout, so a first read equal to the startup scale could stop inspection and miss the change indefinitely.
+- Disposition: accepted. Debouncing only delays the first read; it does not prove the compositor log is current when that read still contains the old completed layout.
+
+**Scoped correction and verification**
+
+- Each Electron display event now starts a bounded five-read settling window at the existing 500 ms interval. Startup-scale reads continue polling for up to 2.5 seconds; a changed value still requires two matching reads, with one final confirmation allowed when the candidate first appears at the end of the window.
+- A startup-scale observation clears a previously reported changed scale only after the full settling window remains stable, avoiding duplicate prompts when an early stale read is followed by the same already-reported changed layout.
+- Added a deterministic regression in which the first post-event read is the startup layout and subsequent reads are the new mixed layout; the watcher detects and reports it after three reads. Existing deterministic tests now also cover the complete unchanged settling window.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; the portable suite ran 12 files and the full suite ran 13 files including WSL integration.
+- Next action: commit and publish the bounded-settling fix, resolve the finding with commit evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.

@@ -143,7 +143,7 @@ test('reports each confirmed WSLg scale once and keeps watching when deferred', 
   listener();
   listener();
   scheduler.flush();
-  assert.equal(reads, 1);
+  assert.equal(reads, 5);
   assert.equal(notifications, 0);
 
   layout = mixedScaleLayout;
@@ -197,8 +197,37 @@ test('waits out a partial WSLg layout before deciding the scale changed', () => 
 
   listener();
   scheduler.flush();
-  assert.equal(reads, 2);
+  assert.equal(reads, 5);
   assert.equal(notifications, 0);
+  dispose();
+});
+
+test('keeps polling when the first post-event WSLg layout is still stale', () => {
+  let listener: () => void = () => { assert.fail('display change listener was not registered'); };
+  let reads = 0;
+  let notifications = 0;
+  const scheduler = createTestScheduler();
+  const dispose = watchWslgDisplayScaleChanges(
+    (nextListener) => {
+      listener = nextListener;
+      return () => {};
+    },
+    1.5,
+    () => { notifications += 1; },
+    {
+      ...wslgOptions,
+      readLog: () => {
+        reads += 1;
+        return reads === 1 ? homogeneousScaleLayout : mixedScaleLayout;
+      },
+      schedule: scheduler.schedule,
+    },
+  );
+
+  listener();
+  scheduler.flush();
+  assert.equal(reads, 3);
+  assert.equal(notifications, 1);
   dispose();
 });
 
