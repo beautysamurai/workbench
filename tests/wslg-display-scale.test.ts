@@ -33,6 +33,27 @@ const wslgOptions = {
   platform: 'linux' as NodeJS.Platform,
 };
 
+function createTestScheduler(): {
+  schedule: (callback: () => void, delayMs: number) => () => void;
+  flush: () => void;
+} {
+  const tasks: Array<{ callback: () => void; canceled: boolean }> = [];
+  return {
+    schedule: (callback) => {
+      const task = { callback, canceled: false };
+      tasks.push(task);
+      return () => { task.canceled = true; };
+    },
+    flush: () => {
+      let task = tasks.shift();
+      while (task) {
+        if (!task.canceled) task.callback();
+        task = tasks.shift();
+      }
+    },
+  };
+}
+
 test('parses the primary Windows desktop scale from the latest WSLg layout input', () => {
   const staleLayout = homogeneousScaleLayout.replaceAll('150', '200');
   assert.equal(parseWslgPrimaryDisplayScale(`${staleLayout}\n${homogeneousScaleLayout}`), 1.5);
@@ -95,11 +116,13 @@ test('configures Chromium scale without overriding an explicit user switch', () 
   assert.deepEqual(appended, []);
 });
 
-test('reports each confirmed WSLg scale once and keeps watching when deferred', async () => {
+test('reports each confirmed WSLg scale once and keeps watching when deferred', () => {
   let listener: () => void = () => { assert.fail('display change listener was not registered'); };
   let layout = homogeneousScaleLayout;
+  let reads = 0;
   let notifications = 0;
   let unsubscribes = 0;
+  const scheduler = createTestScheduler();
   const dispose = watchWslgDisplayScaleChanges(
     (nextListener) => {
       listener = nextListener;
@@ -109,23 +132,28 @@ test('reports each confirmed WSLg scale once and keeps watching when deferred', 
     () => { notifications += 1; },
     {
       ...wslgOptions,
-      debounceMs: 0,
-      readLog: () => layout,
+      readLog: () => {
+        reads += 1;
+        return layout;
+      },
+      schedule: scheduler.schedule,
     },
   );
 
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  listener();
+  scheduler.flush();
+  assert.equal(reads, 1);
   assert.equal(notifications, 0);
 
   layout = mixedScaleLayout;
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.flush();
   assert.equal(notifications, 1);
   assert.equal(unsubscribes, 0);
 
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.flush();
   assert.equal(notifications, 1);
 
   layout = homogeneousScaleLayout.replaceAll(
@@ -133,20 +161,21 @@ test('reports each confirmed WSLg scale once and keeps watching when deferred', 
     'desktopScaleFactor:125',
   );
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.flush();
   assert.equal(notifications, 2);
   dispose();
   assert.equal(unsubscribes, 1);
 
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.flush();
   assert.equal(notifications, 2);
 });
 
-test('waits out a partial WSLg layout before deciding the scale changed', async () => {
+test('waits out a partial WSLg layout before deciding the scale changed', () => {
   let listener: () => void = () => { assert.fail('display change listener was not registered'); };
   let reads = 0;
   let notifications = 0;
+  const scheduler = createTestScheduler();
   const dispose = watchWslgDisplayScaleChanges(
     (nextListener) => {
       listener = nextListener;
@@ -156,18 +185,18 @@ test('waits out a partial WSLg layout before deciding the scale changed', async 
     () => { notifications += 1; },
     {
       ...wslgOptions,
-      debounceMs: 0,
       readLog: () => {
         reads += 1;
         return reads === 1
           ? '[10:00:00.000] Client: DisplayLayoutChange: monitor count:0x1'
           : homogeneousScaleLayout;
       },
+      schedule: scheduler.schedule,
     },
   );
 
   listener();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  scheduler.flush();
   assert.equal(reads, 2);
   assert.equal(notifications, 0);
   dispose();

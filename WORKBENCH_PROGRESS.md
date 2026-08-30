@@ -882,3 +882,19 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and publish the accepted active-work correction, resolve the review thread with commit and verification evidence, then complete another final-head CI and automated re-review.
 - Blocker: none established.
+
+### 2026-08-30 15:34 JST — P1-004 removed Windows timer nondeterminism from scale-watcher regression
+
+**CI failure and diagnosis**
+
+- On commit `afd5b23`, both Linux verification jobs passed in 15–16 seconds, but both Windows packaging jobs failed after 34 seconds in `npm run check:portable` with the same assertion in `reports each confirmed WSLg scale once and keeps watching when deferred`: expected notification count `1`, actual `0`.
+- Classification: test timing defect, not a product regression. The test used a fixed 10 ms wall-clock wait for two nested zero-delay timers. Windows could run the assertion timer before the second debounce callback even though the production watcher behavior was correct.
+
+**Scoped correction and verification**
+
+- The watcher now accepts an internal cancelable scheduler dependency while retaining the same 500 ms timeout scheduler by default. Focused tests use a deterministic in-memory queue and explicitly flush both debounce/confirmation callbacks, preserving coverage of cancellation and disposal without depending on host timer resolution.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed the corrected focused regression; exit `0`.
+- `npm run check:portable` passed strict type checks and all 12 portable test files, matching the failed Windows CI step; exit `0`.
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 full test files including WSL integration, production compilation/assets, and whitespace validation; exit `0`.
+- Next action: commit and push the deterministic test correction, then require fresh CI and exact-head automated review.
+- Blocker: none established.

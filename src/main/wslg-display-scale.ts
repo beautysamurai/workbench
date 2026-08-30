@@ -19,9 +19,15 @@ interface WslgScaleDetectionOptions {
 
 interface WslgScaleWatchOptions extends WslgScaleDetectionOptions {
   debounceMs?: number;
+  schedule?: (callback: () => void, delayMs: number) => () => void;
 }
 
 type SubscribeToDisplayChanges = (listener: () => void) => () => void;
+
+function scheduleWithTimeout(callback: () => void, delayMs: number): () => void {
+  const timer = setTimeout(callback, delayMs);
+  return () => clearTimeout(timer);
+}
 
 function isWslgEnvironment(
   env: NodeJS.ProcessEnv,
@@ -147,6 +153,7 @@ export function watchWslgDisplayScaleChanges(
     env = process.env,
     platform = process.platform,
     debounceMs = DEFAULT_SCALE_CHANGE_DEBOUNCE_MS,
+    schedule = scheduleWithTimeout,
     ...detectionOptions
   }: WslgScaleWatchOptions = {},
 ): () => void {
@@ -155,20 +162,20 @@ export function watchWslgDisplayScaleChanges(
   const effectiveInitialScale = initialScale ?? 1;
   let candidateScale: number | undefined;
   let reportedScale: number | undefined;
-  let timer: NodeJS.Timeout | null = null;
+  let cancelInspection: (() => void) | null = null;
   let stopped = false;
   let unsubscribe = () => {};
 
   const dispose = (): void => {
     if (stopped) return;
     stopped = true;
-    if (timer !== null) clearTimeout(timer);
-    timer = null;
+    cancelInspection?.();
+    cancelInspection = null;
     unsubscribe();
   };
 
   const inspectScale = (): void => {
-    timer = null;
+    cancelInspection = null;
     if (stopped) return;
 
     const detectedScale = detectWslgDisplayScale({
@@ -186,7 +193,7 @@ export function watchWslgDisplayScaleChanges(
     // single null result can be a transient partial record rather than scale 1.
     if (candidateScale !== detectedScale) {
       candidateScale = detectedScale;
-      timer = setTimeout(inspectScale, debounceMs);
+      cancelInspection = schedule(inspectScale, debounceMs);
       return;
     }
 
@@ -199,8 +206,8 @@ export function watchWslgDisplayScaleChanges(
   const handleDisplayChange = (): void => {
     if (stopped) return;
     candidateScale = undefined;
-    if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(inspectScale, debounceMs);
+    cancelInspection?.();
+    cancelInspection = schedule(inspectScale, debounceMs);
   };
 
   unsubscribe = subscribe(handleDisplayChange);
