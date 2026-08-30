@@ -7,9 +7,9 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 ## Current state
 
 - **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
-- **Next task:** P1-004 — complete pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
-- **Next action:** Publish the accepted PR #3 review fix, then complete final-head CI and automated re-review
+- **Next task:** P1-004 — complete correction pull-request CI and automated review
+- **Verified state:** P1-004 is locally complete; consistently scaled WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, mixed-scale layouts retain Electron defaults, runtime scale changes offer a user-controlled recalibration without unexpectedly interrupting active work, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
+- **Next action:** Publish the runtime display-scale correction, then complete final-head CI and automated review
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -734,4 +734,256 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run build` completed the clean production compilation and asset copy; exit `0`. `git diff --check` also passed.
 - Ubuntu's GitHub CLI 2.45.0 failed the explicit reviewer mutation against retired Projects Classic fields. The per-user CLI was upgraded to official 2.98.0 after its release archive matched GitHub's published SHA-256 digest; authentication remained active and the explicit Copilot review request succeeded.
 - Next action: commit and push the accepted fix, then wait for final-head CI and automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 13:59 JST — P1-004 corrected fractional-scale WSLg fullscreen and pointer alignment
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64 (`6.6.87.2-microsoft-standard-WSL2`) with WSLg/XWayland on a 3840×2160 display at 150% Windows desktop scaling.
+- Node / package manager: Node `v22.23.2`, npm `10.9.8`, Linux/WSL install selected by `package-lock.json`; Electron `44.0.0`.
+- Base / branch: fetched `origin/main` at merge commit `a2d8a1f`; clean auxiliary worktree `/tmp/workbench-p1-004-pointer` on `codex/p1-004-fullscreen-pointer-fix` with no default-branch tracking.
+- Preserved state: the primary checkout remains on `codex/p0-002-structured-tasks`; its untracked `.workbench/` directory and `image-3.png` were not modified or transferred.
+
+**Observed behavior and reproduction**
+
+- The merged P1-004 fullscreen restoration fix was present locally, but a native Electron/Windows pointer harness reproduced the new report. Without correction, Electron reported fullscreen bounds, content bounds, and renderer size `(0,0) 3840×2160` with device scale factor `1`, while the Windows-hosted WSLg surface was `(0,0) 2560×1440` at 150% desktop scaling.
+- Real Windows pointer input exposed the coordinate mismatch: host y positions `45`, `85`, `125`, and `205` reached renderer client y positions `68`, `128`, `188`, and `308`. The displayed application was correspondingly compressed, its title/overlay geometry did not match the host surface, and the user-visible cursor target shifted after F11.
+- A maximize-based fallback was tested and rejected: the host surface became 2560×1392 and the Electron viewport 3840×2088, while the same 1.5× pointer-coordinate mismatch remained.
+- Baseline `npm run check` passed strict compilation and all 12 merged-main tests before repository edits; exit `0`.
+
+**Diagnosis and changes**
+
+- Root cause: WSLg recorded the primary Windows desktop scale as 150% but exposed its XWayland client at scale 1. Chromium therefore used physical X pixels while the RDP host and pointer used Windows desktop coordinates. Native fullscreen removed the normal-window compensation and made the disagreement visible.
+- Added `src/main/wslg-display-scale.ts` to read only the bounded tail of WSLg's Weston log, select the latest primary monitor input, account for any scale WSLg already applied, validate the remaining factor, and configure Chromium before Electron's `ready` event.
+- The correction is Linux+WSLg-only, safely does nothing when the log is missing or malformed, and never overrides an explicit `force-device-scale-factor` switch. Native Windows behavior and renderer/main security boundaries are unchanged.
+- Added focused parser, environment-gating, fallback, compositor-scale, and explicit-override regressions; updated current task, user documentation, and changelog evidence.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused regression passed all parser/configuration cases; exit `0`. An intermediate fixture assertion (`2 !== 1`) correctly exposed a missing client-scale fixture line; the fixture was corrected and the focused file rerun. |
+| passed | `npm run check && npm run build && git diff --check` | Strict main/renderer type checks, all 13 compiled test files including WSL integration, clean production compilation/assets, and whitespace validation passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | patched production `npm start -- --enable-logging=stderr` plus bounded Windows window capture | Fullscreen reached Windows rect `(0,0) 2560×1440` and the pre-fullscreen window dimensions returned after F11; the captured top edge was filled. Non-fatal WSLg DBus/GPU warnings remained unchanged. |
+| passed | `/tmp/workbench-p1-004-pointer/node_modules/.bin/electron /tmp/workbench-fullscreen-diag.cjs` plus the bounded PowerShell `GetWindowRect`/pointer harness | The production auto-detection selected scale `1.5`; Electron display/window/content/renderer and the Windows surface all agreed on `(0,0) 2560×1440`. Clicks at y `5`, `45`, `85`, `125`, `165`, `205`, and `285` arrived at those exact client y values, then the exact 900×700 normal bounds restored. |
+| passed | scoped process shutdown | Both patched Workbench and diagnostic Electron roots were terminated with Ctrl+C after the bounded journeys; no task Codex process was started. |
+
+**Closeout**
+
+- Local fix is complete and scoped to startup display reconciliation, one focused test file, and required records/docs. No generated output, temporary diagnostic, screenshot, dependency, or user-owned file is included.
+- Remaining risk: the reported primary 150% monitor is verified with real host input; moving a running WSLg window between monitors with different scale factors was not physically exercised. Parsing accounts for the current primary monitor and any WSLg client scale, while malformed/unavailable diagnostics fail open to Electron's default behavior.
+- Next action: audit and commit only these task paths, fetch/reconcile with `origin/main`, push the feature branch, open a correction pull request, and complete all applicable CI plus automated review.
+- Blocker: none established.
+
+### 2026-08-30 14:22 JST — P1-004 accepted mixed-scale monitor review finding
+
+**Remote review evidence**
+
+- Pull request #4 was opened at `https://github.com/beautysamurai/workbench/pull/4` with head `f5aba91276807723f92486fe7a5ec5fd9bac7a7f`.
+- Both Linux verification jobs passed in 17–18 seconds and both Windows packaging jobs passed in 1 minute 39 seconds and 1 minute 47 seconds across push and pull-request events.
+- Automated Codex review `5060003679` completed on exact head `f5aba91` with one unresolved P2 thread (`discussion_r3888535749`): the process-wide Chromium scale override selected the primary monitor even when WSLg reported heterogeneous monitor scales.
+- Disposition: accepted. The finding directly affects the display-safety boundary; moving the app to a differently scaled monitor could otherwise trade the reported fix for incorrect geometry on that monitor.
+
+**Scoped correction**
+
+- The WSLg layout parser now validates every reported monitor block and returns a scale only when all residual desktop/client scales agree. A mixed-scale or partially invalid layout returns `null`, preserving Electron's per-display defaults rather than forcing the primary DPI process-wide.
+- The focused fixture now covers homogeneous multi-monitor correction, WSLg-applied client scaling, malformed input, and an explicit heterogeneous 100%/150% no-override case. User documentation and task evidence describe this guardrail.
+- Focused `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed after the review correction; exit `0`. Current `/mnt/wslg/weston.log` detection still returns `1.5` for the reported consistently scaled active layout.
+- Next action: run the complete check/build and local diff review, commit and push the accepted correction, then require final-head CI and automated re-review.
+- Blocker: none established.
+
+**Verification after correction**
+
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 test files, the production build, and whitespace validation; exit `0`.
+- The production auto-detection and real Windows pointer harness were rerun after the mixed-scale guard. The active homogeneous layout still selected `1.5`; Windows and Electron agreed on fullscreen `(0,0) 2560×1440`, all seven host/client y coordinates remained exact, and 900×700 restored.
+- Final next action: commit and push the accepted finding, resolve the review thread with the commit evidence, and complete final-head CI plus automated re-review.
+
+### 2026-08-30 14:28 JST — P1-004 accepted partial-layout review finding
+
+**Final-head re-review evidence**
+
+- Commit `9846323` passed both final-head Linux verification jobs in 18 seconds and both Windows packaging jobs in 1 minute 47 seconds and 1 minute 55 seconds.
+- Automated Codex re-review `5060020441` completed on exact head `9846323` and opened one P2 thread (`discussion_r3888555319`): a partially written multi-monitor layout could contain one complete monitor block but still declare more monitors, allowing a stale process-wide scale before the remaining block was written.
+- Disposition: accepted. This is a real startup race against a log that WSLg updates in place.
+
+**Scoped correction and verification plan**
+
+- Scale detection now requires the latest `DisplayLayoutChange` record to declare a positive hexadecimal monitor count, contain exactly that many input monitor headers, and reach the input/output validation boundary. Incomplete, count-mismatched, mixed-scale, and malformed layouts all preserve Electron defaults.
+- Focused regressions cover both a truncated two-monitor record and a completed record whose declared count exceeds its monitor blocks.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed after the correction; exit `0`. The current completed active layout still detects `1.5`.
+- Next action: complete broad checks and the real pointer journey, then commit, push, resolve the thread, and require another exact-head CI/re-review cycle.
+- Blocker: none established.
+
+**Verification after correction**
+
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 test files, production compilation/assets, and whitespace validation; exit `0`.
+- The bounded production auto-detection/pointer journey was rerun after the completion guard: Electron retained scale `1.5`, Windows and Electron both reached fullscreen `(0,0) 2560×1440`, all seven y coordinates remained exact, and the 900×700 window restored.
+- Final next action: commit and publish the race fix, resolve the finding with evidence, and complete one more final-head CI and automated re-review.
+
+### 2026-08-30 14:45 JST — P1-004 accepted runtime display-scale review finding
+
+**Final-head review evidence**
+
+- Commit `48c4af6` passed both Linux verification jobs in 14–16 seconds and both Windows packaging jobs in 1 minute 41 seconds and 1 minute 56 seconds.
+- Automated Codex review `5060029809` completed on exact head `48c4af6` and opened one P2 thread (`discussion_r3888565520`): a process-wide startup scale remained active for the process lifetime after Windows scaling or monitor topology changed.
+- Disposition: accepted. The startup correction must be recomputed when the effective WSLg layout scale changes; otherwise a previously correct fullscreen can acquire the same geometry and hit-target mismatch after a display change.
+
+**Scoped correction**
+
+- Workbench now listens for Electron display additions, removals, and metric changes only in WSLg when the user did not provide an explicit device-scale switch. It rereads the latest validated Weston layout after the event settles and requires two matching changed values to avoid reacting to a partially written record.
+- A confirmed effective-scale change removes the listeners, schedules `app.relaunch()`, and uses normal `app.quit()` cleanup so terminal and Codex child processes are closed. The new process recomputes the WSLg startup scale; unchanged metrics do nothing.
+- Focused regressions cover an unchanged event, a transient partial record, a uniform-to-mixed change, exactly-once relaunch and listener cleanup, and non-WSLg subscription gating. README, task evidence, and changelog now disclose the clean runtime recalibration.
+
+**Verification after correction**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused parser, startup configuration, and runtime scale-watcher regressions passed; exit `0`. |
+| passed | `npm run check && npm run build && git diff --check` | Strict main/renderer type checks, all 13 compiled test files including WSL integration, production compilation/assets, and whitespace validation passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | `/tmp/workbench-p1-004-pointer/node_modules/.bin/electron /tmp/workbench-fullscreen-diag.cjs` plus the bounded PowerShell native-input harness | Electron and the Windows host again agreed on fullscreen `(0,0) 2560×1440`; host y positions `5`, `45`, `85`, `125`, `165`, `205`, and `285` reached those exact renderer positions, then the 900×700 content bounds restored. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The real application entry point initialized the runtime display listeners and remained running under WSLg until the intentional SIGINT. Existing DBus/GPU environment warnings were non-fatal. |
+| passed | diagnostic shutdown with Ctrl+C | The bounded Electron diagnostic exited after verification; no Codex child process was started. |
+| passed | scoped `pgrep` for the task Electron path | No Electron process from either bounded journey remained after shutdown. |
+
+**Next action**
+
+- Commit and publish the accepted runtime correction, resolve the review thread with commit and verification evidence, then complete final-head CI and automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 14:56 JST — P1-004 accepted active-work relaunch review finding
+
+**Final-head review evidence**
+
+- Commit `008eecf` passed both Linux verification jobs in 15–16 seconds and both Windows packaging jobs in 1 minute 45 seconds and 2 minutes 19 seconds.
+- Automated Codex review `5060066014` completed on exact head `008eecf` and opened one P2 thread (`discussion_r3888595914`): the automatic display-scale relaunch could stop an active terminal command or Codex turn and discard renderer-only composer text without warning.
+- Disposition: accepted. Display recalibration is important, but an ordinary monitor or scaling change must not silently destroy active work.
+
+**Scoped correction**
+
+- A confirmed effective WSLg scale change now opens a Workbench restart prompt instead of quitting automatically. **Later** is the safe default and explicitly lets the user finish work and restart manually; **Restart now** warns that running terminals, Codex turns, and unsent prompt text will be stopped or lost before using the normal relaunch/quit cleanup.
+- The display watcher remains subscribed after a deferred restart, suppresses duplicate notifications for the same effective scale, reports a genuinely different subsequent scale, and resets its notification state if the layout returns to the process's calibrated scale.
+- Focused tests now verify same-scale suppression, transient partial-record recovery, one notification per changed scale, continued watching after deferral, explicit disposal, and non-WSLg gating. README, task evidence, and changelog disclose the user-controlled recalibration behavior.
+
+**Verification after correction**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused parser, startup configuration, transient-layout, changed-scale deduplication, deferral, and cleanup cases passed; exit `0`. |
+| passed | `npm run check && npm run build && git diff --check` | Strict main/renderer type checks, all 13 compiled test files including WSL integration, production compilation/assets, and whitespace validation passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The actual app initialized the persistent display watcher and restart-prompt wiring and remained running under WSLg until intentional SIGINT. Existing DBus/GPU warnings were non-fatal. |
+| passed | `pgrep -af '[e]lectron.*(/tmp/workbench-p1-004-pointer|electron \\.)'` | Exit `1` with no output confirmed the bounded launch left no Electron process. |
+| not run | physically change Windows scale or attach/remove a monitor while a terminal command, Codex turn, or draft is active | Altering the host display configuration was not necessary for the scoped review correction. The watcher decision paths and deferred-listener lifecycle are covered deterministically; the Electron dialog integration is type-checked and initialized by the real app launch. |
+
+**Next action**
+
+- Commit and publish the accepted active-work correction, resolve the review thread with commit and verification evidence, then complete another final-head CI and automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 15:34 JST — P1-004 removed Windows timer nondeterminism from scale-watcher regression
+
+**CI failure and diagnosis**
+
+- On commit `afd5b23`, both Linux verification jobs passed in 15–16 seconds, but both Windows packaging jobs failed after 34 seconds in `npm run check:portable` with the same assertion in `reports each confirmed WSLg scale once and keeps watching when deferred`: expected notification count `1`, actual `0`.
+- Classification: test timing defect, not a product regression. The test used a fixed 10 ms wall-clock wait for two nested zero-delay timers. Windows could run the assertion timer before the second debounce callback even though the production watcher behavior was correct.
+
+**Scoped correction and verification**
+
+- The watcher now accepts an internal cancelable scheduler dependency while retaining the same 500 ms timeout scheduler by default. Focused tests use a deterministic in-memory queue and explicitly flush both debounce/confirmation callbacks, preserving coverage of cancellation and disposal without depending on host timer resolution.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed the corrected focused regression; exit `0`.
+- `npm run check:portable` passed strict type checks and all 12 portable test files, matching the failed Windows CI step; exit `0`.
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 full test files including WSL integration, production compilation/assets, and whitespace validation; exit `0`.
+- Next action: commit and push the deterministic test correction, then require fresh CI and exact-head automated review.
+- Blocker: none established.
+
+### 2026-08-30 15:38 JST — P1-004 accepted stale-first-read review finding
+
+**Automated review evidence**
+
+- Automated Codex review `5060128287` completed on exact head `afd5b23` while the Windows timer-test correction was in progress and opened one P2 thread (`discussion_r3888663281`): Electron can emit its display event before Weston appends the new layout, so a first read equal to the startup scale could stop inspection and miss the change indefinitely.
+- Disposition: accepted. Debouncing only delays the first read; it does not prove the compositor log is current when that read still contains the old completed layout.
+
+**Scoped correction and verification**
+
+- Each Electron display event now starts a bounded five-read settling window at the existing 500 ms interval. Startup-scale reads continue polling for up to 2.5 seconds; a changed value still requires two matching reads, with one final confirmation allowed when the candidate first appears at the end of the window.
+- A startup-scale observation clears a previously reported changed scale only after the full settling window remains stable, avoiding duplicate prompts when an early stale read is followed by the same already-reported changed layout.
+- Added a deterministic regression in which the first post-event read is the startup layout and subsequent reads are the new mixed layout; the watcher detects and reports it after three reads. Existing deterministic tests now also cover the complete unchanged settling window.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; the portable suite ran 12 files and the full suite ran 13 files including WSL integration.
+- Next action: commit and publish the bounded-settling fix, resolve the finding with commit evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 16:33 JST — P1-004 separated indeterminate layouts and retried startup settling
+
+**CI and automated review evidence**
+
+- Commit `0cfcb94` passed both Linux verification jobs in 14–17 seconds and both Windows packaging jobs in 1 minute 43 seconds and 1 minute 44 seconds; this confirmed the deterministic scheduler correction on both workflow events.
+- Automated Codex review `5060139049` on `b07a81f` opened P2 thread `discussion_r3888675160`: a pre-ready incomplete layout could become complete before the watcher subscribed, leaving no later Electron event to trigger recalibration.
+- Automated Codex review `5060194815` on exact head `0cfcb94` opened P2 thread `discussion_r3888731072`: coercing an unreadable, truncated, or malformed layout to scale 1 could falsely confirm a restart transition.
+- Disposition: both accepted. A valid Electron-default layout and an indeterminate Weston read require different runtime behavior, and startup needs its own post-ready settling pass.
+
+**Scoped correction**
+
+- Internal detection now returns explicit `uniform`, `mixed`, or `indeterminate` layout states. A valid uniform scale 1 or mixed layout maps to Electron's default target; an indeterminate read is never treated as scale 1, never becomes a restart candidate, and only consumes one bounded settling read.
+- The display watcher starts one settling pass immediately after subscribing, in addition to reacting to later display events. If pre-ready configuration missed a partial layout that becomes a valid uniform fractional scale by `ready`, two matching post-ready reads offer the safe restart prompt.
+- Existing public parser/detection behavior remains compatible (`number | null`), explicit user scale switches still bypass Workbench management, and production timing remains five reads at 500 ms with cancellation on a newer event or app exit.
+
+**Verification after correction**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused detection/watcher file passed, including indeterminate-read suppression and post-ready recovery after a missed pre-ready scale; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 12 portable test files passed; exit `0`. |
+| passed | `npm run check && npm run build && git diff --check` | Strict type checks, all 13 full test files including WSL integration, production compilation/assets, and whitespace validation passed; exit `0`. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The real app completed its startup settling window on the current valid 150% layout without opening a false recalibration prompt and remained running until intentional SIGINT. Existing DBus/GPU warnings were non-fatal. |
+| passed | read-only Windows `Get-Process` title check | Exactly the expected `Workbench (Ubuntu-24.04)` host window was present during the startup smoke. |
+| passed | scoped Electron `pgrep` after shutdown | Exit `1` with no output; no task Electron process remained. |
+
+**Next action**
+
+- Commit and publish both accepted corrections, resolve both review threads with evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 16:40 JST — P1-004 accepted long-running Weston log review finding
+
+**Final-head review evidence**
+
+- Commit `7ecc59f` passed both Linux verification jobs in 15–16 seconds and both Windows packaging jobs in 1 minute 44 seconds and 1 minute 50 seconds.
+- Automated Codex review `5060240378` completed on exact head `7ecc59f` and opened one P2 thread (`discussion_r3888776693`): if more than 512 KiB of unrelated Weston output followed the latest layout marker, the fixed tail omitted that marker and scale detection remained indeterminate.
+- Disposition: accepted. WSLg can be long-running independently of Workbench, so startup correctness cannot rely on the latest layout happening to remain inside one fixed tail.
+
+**Scoped correction and verification**
+
+- The Weston reader now scans backward from a snapshot size in fixed 512 KiB chunks with marker-length overlap, stopping at the latest `DisplayLayoutChange` marker. It then reads at most 512 KiB forward from that marker for parsing, bounding memory and layout payload while allowing the marker to be arbitrarily far from the end of the log.
+- A short read caused by concurrent truncation becomes an indeterminate detection and is retried by the existing settling loop; the descriptor remains protected by `finally` cleanup. Detection options accept a task-internal log path so the real reader can be exercised portably without touching the host Weston file.
+- The focused regression creates a 1 MiB temporary log whose latest marker crosses the old 512 KiB tail boundary, verifies scale `1.5`, and removes the temporary directory after the test.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; portable ran 12 files and full verification ran 13 files including WSL integration.
+- `node -e 'const {detectWslgDisplayScale}=require("./dist/main/main/wslg-display-scale.js"); console.log(detectWslgDisplayScale())'` printed `1.5` against the current real `/mnt/wslg/weston.log` after the reader change.
+
+**Next action**
+
+- Commit and publish the backward-scan fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 17:03 JST — P1-004 accepted missing client-scale review finding
+
+**Final-head delivery evidence**
+
+- Commit `970f179` passed both Linux verification jobs in 17–19 seconds and both Windows packaging jobs in 1 minute 54 seconds and 2 minutes.
+- The automatic new-head review request remained queued without a submission. `gh pr edit 4 --add-reviewer @copilot` was accepted but did not start a visible run, so the documented `@codex review` trigger was posted. The connector acknowledged it with 👀 and a running summary for exact head `970f179`.
+- Manual automated review `5060285941` completed on exact head `970f179` and opened one P2 thread (`discussion_r3888823814`): a missing or nonnumeric Weston `client scale` field was silently defaulted to 1, allowing an unknown applied compositor scale to become a process-wide override.
+- Disposition: accepted. Every factor used to compute the residual Chromium scale must be present and numeric; unknown compositor state is indeterminate, not an implicit identity scale.
+
+**Scoped correction and verification**
+
+- Removed the client-scale fallback. A missing field or a value outside the numeric parser now produces `NaN`, fails the existing finite residual validation, and keeps the complete-looking layout indeterminate.
+- Focused parser regressions cover both a nonnumeric `client scale :unknown` value and an absent client-scale line in one monitor block.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; portable ran 12 files and full verification ran 13 files including WSL integration.
+- Current real Weston detection still printed `1.5` from the production build, confirming the active valid layout contains the required client-scale records.
+
+**Next action**
+
+- Commit and publish the strict client-scale parser fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
 - Blocker: none established.

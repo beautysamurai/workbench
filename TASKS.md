@@ -38,13 +38,13 @@ States: `pending` · `in progress` · `blocked` · `done`
 
 - **State:** in progress
 - **Objective:** To fix GUI bugs
-- **Reported or observed symptom:** Full screen mode doesn't work well.
+- **Reported or observed symptom:** Under 150% Windows scaling, WSLg fullscreen did not align with the top edge and mouse hit targets shifted below the visible pointer.
 - **Acceptance criteria:**
   - [x] Full screen, a small window can be switched to each other without problem.
   - [x] Model should be determined at the terminal level, not globally.
-- **Evidence:** F11 and Escape now round-trip native fullscreen through an explicit normal-bounds snapshot; a production Electron journey returned exactly from fullscreen to 720×520 with no horizontal overflow. Model/reasoning choices are keyed by Codex thread, hydrated from start/resume responses, preserved when unavailable in the visible catalog, updated with `thread/settings/update`, and no longer stored on the workspace. Two production-renderer threads retained distinct Terra/medium and Sol/high choices. Focused tests, the installed app-server smoke, strict checks, and the production build passed.
-- **Hypothesis:** Confirmed root causes: the 1080×700 minimum and fixed three-column layout prevented a genuinely small restored window, WSLg Electron retained fullscreen-sized bounds after exit, and all Codex requests read one persisted workspace preference.
-- **Next action:** Publish the accepted unavailable-model review fix, then complete final-head CI and automated re-review on PR #3.
+- **Evidence:** F11 and Escape round-trip native fullscreen through an explicit normal-bounds snapshot. Workbench now also reconciles WSLg's unapplied fractional desktop scale before Electron becomes ready when every reported monitor agrees: on the reported 150% display, both the Windows surface and Electron renderer reached `(0,0) 2560×1440`, seven real pointer clicks retained exact y-coordinates, and the original 900×700 bounds restored. Mixed-scale layouts safely retain Electron defaults. A confirmed runtime scale change offers a restart for recalibration, with a safe **Later** path that does not interrupt active commands or discard drafts unexpectedly. Model/reasoning choices remain keyed by Codex thread and were previously verified with two independent thread settings. The focused scale regression, all 13 test files, strict checks, production build, patched Electron launch, and real Windows-pointer journey passed.
+- **Hypothesis:** Confirmed root causes: WSLg exposed a 3840×2160 XWayland display at scale 1 while its Windows RDP surface used 2560×1440 coordinates at 150%, native fullscreen retained fullscreen-sized bounds after exit, the original fixed layout prevented a genuinely small window, and model ownership was persisted at workspace scope.
+- **Next action:** Publish the runtime display-scale correction, then complete final-head CI and automated review.
 - **Blocker:** None established.
 
 
