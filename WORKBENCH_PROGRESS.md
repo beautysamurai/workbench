@@ -7,9 +7,9 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 ## Current state
 
 - **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
-- **Next task:** P1-004 — complete pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
-- **Next action:** Publish the accepted PR #3 review fix, then complete final-head CI and automated re-review
+- **Next task:** P1-004 — complete correction pull-request CI and automated review
+- **Verified state:** P1-004 is locally complete; fractional-scale WSLg fullscreen reaches the host display with exact pointer coordinates and restores prior bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
+- **Next action:** Publish the fullscreen scale correction, then complete final-head CI and automated review
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -734,4 +734,45 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run build` completed the clean production compilation and asset copy; exit `0`. `git diff --check` also passed.
 - Ubuntu's GitHub CLI 2.45.0 failed the explicit reviewer mutation against retired Projects Classic fields. The per-user CLI was upgraded to official 2.98.0 after its release archive matched GitHub's published SHA-256 digest; authentication remained active and the explicit Copilot review request succeeded.
 - Next action: commit and push the accepted fix, then wait for final-head CI and automated re-review.
+- Blocker: none established.
+
+### 2026-08-30 13:59 JST — P1-004 corrected fractional-scale WSLg fullscreen and pointer alignment
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64 (`6.6.87.2-microsoft-standard-WSL2`) with WSLg/XWayland on a 3840×2160 display at 150% Windows desktop scaling.
+- Node / package manager: Node `v22.23.2`, npm `10.9.8`, Linux/WSL install selected by `package-lock.json`; Electron `44.0.0`.
+- Base / branch: fetched `origin/main` at merge commit `a2d8a1f`; clean auxiliary worktree `/tmp/workbench-p1-004-pointer` on `codex/p1-004-fullscreen-pointer-fix` with no default-branch tracking.
+- Preserved state: the primary checkout remains on `codex/p0-002-structured-tasks`; its untracked `.workbench/` directory and `image-3.png` were not modified or transferred.
+
+**Observed behavior and reproduction**
+
+- The merged P1-004 fullscreen restoration fix was present locally, but a native Electron/Windows pointer harness reproduced the new report. Without correction, Electron reported fullscreen bounds, content bounds, and renderer size `(0,0) 3840×2160` with device scale factor `1`, while the Windows-hosted WSLg surface was `(0,0) 2560×1440` at 150% desktop scaling.
+- Real Windows pointer input exposed the coordinate mismatch: host y positions `45`, `85`, `125`, and `205` reached renderer client y positions `68`, `128`, `188`, and `308`. The displayed application was correspondingly compressed, its title/overlay geometry did not match the host surface, and the user-visible cursor target shifted after F11.
+- A maximize-based fallback was tested and rejected: the host surface became 2560×1392 and the Electron viewport 3840×2088, while the same 1.5× pointer-coordinate mismatch remained.
+- Baseline `npm run check` passed strict compilation and all 12 merged-main tests before repository edits; exit `0`.
+
+**Diagnosis and changes**
+
+- Root cause: WSLg recorded the primary Windows desktop scale as 150% but exposed its XWayland client at scale 1. Chromium therefore used physical X pixels while the RDP host and pointer used Windows desktop coordinates. Native fullscreen removed the normal-window compensation and made the disagreement visible.
+- Added `src/main/wslg-display-scale.ts` to read only the bounded tail of WSLg's Weston log, select the latest primary monitor input, account for any scale WSLg already applied, validate the remaining factor, and configure Chromium before Electron's `ready` event.
+- The correction is Linux+WSLg-only, safely does nothing when the log is missing or malformed, and never overrides an explicit `force-device-scale-factor` switch. Native Windows behavior and renderer/main security boundaries are unchanged.
+- Added focused parser, environment-gating, fallback, compositor-scale, and explicit-override regressions; updated current task, user documentation, and changelog evidence.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused regression passed all parser/configuration cases; exit `0`. An intermediate fixture assertion (`2 !== 1`) correctly exposed a missing client-scale fixture line; the fixture was corrected and the focused file rerun. |
+| passed | `npm run check && npm run build && git diff --check` | Strict main/renderer type checks, all 13 compiled test files including WSL integration, clean production compilation/assets, and whitespace validation passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | patched production `npm start -- --enable-logging=stderr` plus bounded Windows window capture | Fullscreen reached Windows rect `(0,0) 2560×1440` and the pre-fullscreen window dimensions returned after F11; the captured top edge was filled. Non-fatal WSLg DBus/GPU warnings remained unchanged. |
+| passed | `/tmp/workbench-p1-004-pointer/node_modules/.bin/electron /tmp/workbench-fullscreen-diag.cjs` plus the bounded PowerShell `GetWindowRect`/pointer harness | The production auto-detection selected scale `1.5`; Electron display/window/content/renderer and the Windows surface all agreed on `(0,0) 2560×1440`. Clicks at y `5`, `45`, `85`, `125`, `165`, `205`, and `285` arrived at those exact client y values, then the exact 900×700 normal bounds restored. |
+| passed | scoped process shutdown | Both patched Workbench and diagnostic Electron roots were terminated with Ctrl+C after the bounded journeys; no task Codex process was started. |
+
+**Closeout**
+
+- Local fix is complete and scoped to startup display reconciliation, one focused test file, and required records/docs. No generated output, temporary diagnostic, screenshot, dependency, or user-owned file is included.
+- Remaining risk: the reported primary 150% monitor is verified with real host input; moving a running WSLg window between monitors with different scale factors was not physically exercised. Parsing accounts for the current primary monitor and any WSLg client scale, while malformed/unavailable diagnostics fail open to Electron's default behavior.
+- Next action: audit and commit only these task paths, fetch/reconcile with `origin/main`, push the feature branch, open a correction pull request, and complete all applicable CI plus automated review.
 - Blocker: none established.

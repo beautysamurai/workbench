@@ -9,6 +9,9 @@ import {
   WORKBENCH_MIN_WINDOW_HEIGHT,
   WORKBENCH_MIN_WINDOW_WIDTH,
 } from './window-behavior';
+import { configureWslgDisplayScale } from './wslg-display-scale';
+
+configureWslgDisplayScale(app.commandLine);
 
 let mainWindow: BrowserWindow | null = null;
 let disposeIpc: (() => void) | null = null;
