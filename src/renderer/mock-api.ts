@@ -1,6 +1,7 @@
 import type {
   CodexConnectionStatus,
   CodexEventEnvelope,
+  CodexModelPreference,
   CodexServerRequestEnvelope,
   ContextBuildResult,
   PersistedState,
@@ -35,8 +36,6 @@ const sampleWorkspaces: Workspace[] = [
       { id: 'arch', type: 'file', label: 'Curve architecture', value: 'docs/curve-dependency.md', includeContent: true },
       { id: 'note', type: 'note', label: 'Design constraints', value: 'JPY dependencies are non-linear. Preserve compatibility with the shared regional implementation.', includeContent: true },
     ],
-    codexModel: 'gpt-5.6-terra',
-    codexEffort: 'medium',
     createdAt: now,
     updatedAt: now,
   },
@@ -51,8 +50,6 @@ const sampleWorkspaces: Workspace[] = [
     contextItems: [
       { id: 'ideas', type: 'note', label: 'Current question', value: 'Model RFQ skew using inventory and post-trade market response.', includeContent: true },
     ],
-    codexModel: null,
-    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -65,8 +62,6 @@ const sampleWorkspaces: Workspace[] = [
     root: '/home/kabes/projects/spring-lab',
     commands: [{ id: 'dev', name: 'Development server', command: './gradlew bootRun' }],
     contextItems: [],
-    codexModel: null,
-    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -79,8 +74,6 @@ const sampleWorkspaces: Workspace[] = [
     root: '/home/kabes/career/interview',
     commands: [],
     contextItems: [],
-    codexModel: null,
-    codexEffort: null,
     createdAt: now,
     updatedAt: now,
   },
@@ -109,9 +102,18 @@ const projectTasks = new Map<string, Array<{ id: string; title: string; state: '
     { id: 'P1-102', title: 'Profile allocation spike', state: 'pending', objective: 'Find avoidable pricing allocations.' },
   ]],
 ]);
+const mockThreadPreferences = new Map<string, CodexModelPreference>([
+  ['thr-refactor', { model: 'gpt-5.6-terra', effort: 'medium' }],
+  ['thr-tests', { model: 'gpt-5.6-sol', effort: 'high' }],
+  ['thr-gc', { model: 'gpt-5.6-sol', effort: 'low' }],
+]);
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function mockThreadPreference(threadId: string): CodexModelPreference {
+  return clone(mockThreadPreferences.get(threadId) ?? { model: 'gpt-5.6-sol', effort: 'low' });
 }
 
 function saveWorkspace(draft: WorkspaceDraft): PersistedState {
@@ -125,8 +127,6 @@ function saveWorkspace(draft: WorkspaceDraft): PersistedState {
     root: draft.root,
     commands: draft.commands ?? existing?.commands ?? [],
     contextItems: draft.contextItems ?? existing?.contextItems ?? [],
-    codexModel: draft.codexModel ?? existing?.codexModel ?? null,
-    codexEffort: draft.codexEffort ?? existing?.codexEffort ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: new Date().toISOString(),
   };
@@ -188,12 +188,6 @@ export function createMockApi(): WorkbenchApi {
     state: {
       get: async () => clone(state),
       saveWorkspace: async (draft) => saveWorkspace(draft),
-      saveCodexPreferences: async (workspaceId, model, effort) => {
-        const workspace = workspaceById(workspaceId);
-        workspace.codexModel = model;
-        workspace.codexEffort = effort;
-        return clone(state);
-      },
       deleteWorkspace: async (workspaceId) => {
         state.workspaces = state.workspaces.filter((workspace) => workspace.id !== workspaceId);
         if (state.selectedWorkspaceId === workspaceId) state.selectedWorkspaceId = state.workspaces[0]?.id ?? null;
@@ -287,8 +281,23 @@ export function createMockApi(): WorkbenchApi {
         ],
         nextCursor: null,
       }),
-      startThread: async () => ({ thread: { id: `thr-${id()}`, name: null, preview: '' } }),
-      resumeThread: async (_workspaceId, threadId) => ({ thread: { id: threadId } }),
+      startThread: async (_workspaceId, preference) => {
+        const threadId = `thr-${id()}`;
+        mockThreadPreferences.set(threadId, clone(preference));
+        return {
+          thread: { id: threadId, name: null, preview: '' },
+          model: preference.model,
+          reasoningEffort: preference.effort,
+        };
+      },
+      resumeThread: async (_workspaceId, threadId) => {
+        const preference = mockThreadPreference(threadId);
+        return {
+          thread: { id: threadId },
+          model: preference.model,
+          reasoningEffort: preference.effort,
+        };
+      },
       readThread: async (_workspaceId, threadId) => ({
         thread: {
           id: threadId,
@@ -301,7 +310,20 @@ export function createMockApi(): WorkbenchApi {
           ],
         },
       }),
-      startTurn: async (_workspaceId, threadId, text) => {
+      updateThreadSettings: async (workspaceId, threadId, preference) => {
+        mockThreadPreferences.set(threadId, clone(preference));
+        eventListeners.forEach((listener) => listener({
+          distro: workspaceById(workspaceId).distro,
+          method: 'thread/settings/updated',
+          params: {
+            threadId,
+            threadSettings: { model: preference.model, effort: preference.effort },
+          },
+        }));
+        return {};
+      },
+      startTurn: async (_workspaceId, threadId, text, preference) => {
+        mockThreadPreferences.set(threadId, clone(preference));
         const turnId = `turn-${id()}`;
         eventListeners.forEach((listener) => listener({ distro: 'Ubuntu', method: 'turn/started', params: { threadId, turn: { id: turnId, status: 'inProgress' } } }));
         eventListeners.forEach((listener) => listener({ distro: 'Ubuntu', method: 'item/started', params: { threadId, turnId, item: { id: `user-${id()}`, type: 'userMessage', content: [{ type: 'text', text }] } } }));

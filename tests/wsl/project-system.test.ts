@@ -13,7 +13,7 @@ function temporaryWorkspace(run: (workspace: Workspace, directory: string) => Pr
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-project-'));
   const workspace: Workspace = {
     id: 'workspace', name: 'Project', description: '', icon: 'code', distro: 'Local Linux',
-    root: directory, commands: [], contextItems: [], codexModel: null, codexEffort: null,
+    root: directory, commands: [], contextItems: [],
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
   };
   return run(workspace, directory).finally(() => fs.rmSync(directory, { recursive: true, force: true }));

@@ -34,8 +34,6 @@ export interface Workspace {
   root: string;
   commands: WorkspaceCommand[];
   contextItems: ContextItem[];
-  codexModel: string | null;
-  codexEffort: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,8 +47,11 @@ export interface WorkspaceDraft {
   root: string;
   commands?: WorkspaceCommand[];
   contextItems?: ContextItem[];
-  codexModel?: string | null;
-  codexEffort?: string | null;
+}
+
+export interface CodexModelPreference {
+  model: string | null;
+  effort: string | null;
 }
 
 export interface CodexReasoningEffortOption {
@@ -227,7 +228,6 @@ export interface WorkbenchApi {
   state: {
     get(): Promise<PersistedState>;
     saveWorkspace(draft: WorkspaceDraft): Promise<PersistedState>;
-    saveCodexPreferences(workspaceId: string, model: string | null, effort: string | null): Promise<PersistedState>;
     deleteWorkspace(workspaceId: string): Promise<PersistedState>;
     selectWorkspace(workspaceId: string | null): Promise<PersistedState>;
     saveSettings(settings: WorkbenchSettings): Promise<PersistedState>;
@@ -256,10 +256,20 @@ export interface WorkbenchApi {
     listModels(workspaceId: string): Promise<CodexModelList>;
     getRateLimits(workspaceId: string): Promise<CodexRateLimits>;
     listThreads(workspaceId: string): Promise<{ data: CodexThreadSummary[]; nextCursor?: string | null }>;
-    startThread(workspaceId: string): Promise<Record<string, unknown>>;
+    startThread(workspaceId: string, preference: CodexModelPreference): Promise<Record<string, unknown>>;
     resumeThread(workspaceId: string, threadId: string): Promise<Record<string, unknown>>;
     readThread(workspaceId: string, threadId: string): Promise<Record<string, unknown>>;
-    startTurn(workspaceId: string, threadId: string, text: string): Promise<Record<string, unknown>>;
+    updateThreadSettings(
+      workspaceId: string,
+      threadId: string,
+      preference: CodexModelPreference,
+    ): Promise<Record<string, unknown>>;
+    startTurn(
+      workspaceId: string,
+      threadId: string,
+      text: string,
+      preference: CodexModelPreference,
+    ): Promise<Record<string, unknown>>;
     interruptTurn(workspaceId: string, threadId: string, turnId: string): Promise<ActionResult>;
     reviewUncommitted(workspaceId: string, threadId: string): Promise<Record<string, unknown>>;
     archiveThread(workspaceId: string, threadId: string): Promise<ActionResult>;

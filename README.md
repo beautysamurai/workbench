@@ -13,7 +13,7 @@ It does not add another paid AI provider and it does not replace IntelliJ, ChatG
 - Persistent workspaces for code, research, interview preparation, or any WSL directory
 - A polished dashboard with live Git, WSL, Codex, context, and terminal status
 - Native Codex threads through `codex app-server`
-- Workspace-level Codex model and reasoning-effort selection with remaining primary usage shown in the app
+- Per-thread Codex model and reasoning-effort selection with remaining primary usage shown in the app
 - Streaming agent messages, plans, shell output, diffs, reviews, and approval requests
 - A GUI task queue backed by `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`
 - Embedded persistent WSL shells, with a direct-process fallback when the experimental Codex PTY API is unavailable
@@ -108,10 +108,12 @@ The Electron main process communicates with it over JSONL using the official app
 - review results
 - command and file-change approval requests
 - turn interruption and thread archiving
-- live model/reasoning selection from the installed Codex catalog
+- thread-scoped model/reasoning selection from the installed Codex catalog
 - remaining primary usage and its reset time
 
 Workbench uses the Codex login already stored in WSL. It does not read, duplicate, or store an OpenAI API key.
+
+Each Codex thread owns its model and reasoning-effort selection. Switching threads restores that thread's effective values, while the selector on the empty landing view configures only the next thread. Ordinary shell-terminal tabs do not invoke an AI model.
 
 ## ChatGPT integration
 
@@ -146,8 +148,11 @@ Do not point Workbench or a cloud-connected Codex account at employer source cod
 | `Ctrl+K` | Open the command palette |
 | `Ctrl+Enter` | Send the current Codex prompt |
 | `Ctrl+C` in terminal input | Send an interrupt to the active shell |
-| `Esc` | Close the command palette or modal |
+| `F11` | Toggle fullscreen while preserving the restored window bounds |
+| `Esc` | Exit fullscreen, or close the command palette or modal |
 | `F12` | Toggle Electron developer tools |
+
+The main layout adapts down to a 720×520 window. At compact widths, the context tray is hidden and the Codex thread list becomes a horizontal rail so the active workspace remains usable.
 
 ## Development
 
@@ -172,6 +177,8 @@ src/
 │   ├── main.ts                 Electron lifecycle and window security
 │   ├── ipc.ts                  Narrow renderer-to-main command bridge
 │   ├── codex-app-server.ts     JSONL app-server client and connection manager
+│   ├── codex-session.ts        Validated thread-scoped model wire overrides
+│   ├── window-behavior.ts      Fullscreen shortcuts and restored bounds
 │   ├── terminal-manager.ts     Codex PTY and direct-WSL shell fallback
 │   ├── wsl.ts                  WSL discovery, Git status, and app launching
 │   ├── context-service.ts      Safe project-file loading and context creation
@@ -182,6 +189,7 @@ src/
 │   ├── main.ts                 Workspace UI and interaction state
 │   ├── styles.css              Complete visual system
 │   ├── codex-metadata.ts       Model preference and usage-limit normalization
+│   ├── codex-session-preferences.ts  Per-thread renderer model state
 │   ├── mock-api.ts             Browser-only preview backend
 │   ├── markdown.ts             Safe minimal Markdown/diff rendering
 │   └── terminal-buffer.ts      ANSI cleanup and terminal scrollback

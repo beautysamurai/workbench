@@ -57,9 +57,9 @@ A Codex turn is started with:
 
 Thread creation and resume use the app-server's top-level `sandbox: "workspace-write"` mode. Turn overrides use the distinct tagged sandbox-policy object shown above, whose type is `workspaceWrite`.
 
-The renderer loads the current model catalog with `model/list`, stores a workspace-level model and reasoning effort, and passes them through thread and turn requests. `account/rateLimits/read` plus `account/rateLimits/updated` supply the primary usage window shown in the dashboard and Codex toolbar.
+The renderer loads the current model catalog with `model/list` and keeps model/reasoning choices keyed by Codex thread ID. New-thread choices are an in-memory draft until `thread/start`; resumed threads hydrate their effective values from `thread/resume`. Changes to an existing thread use `thread/settings/update`, and each turn carries that thread's current values. The main process validates these overrides before forwarding them. `account/rateLimits/read` plus `account/rateLimits/updated` supply the primary usage window shown in the dashboard and Codex toolbar.
 
-These values can be changed in Settings.
+The normal workspace JSON does not store model preferences, so changing one thread cannot rewrite another thread's selection.
 
 ### Terminal
 
@@ -77,12 +77,15 @@ PersistedState
 └── workspaces[]
     ├── identity and display metadata
     ├── WSL distribution and root
-    ├── Codex model and reasoning effort
     ├── quick commands[]
     └── contextItems[]
 ```
 
 Writes use a temporary file followed by a rename. Invalid legacy workspace entries are skipped rather than preventing startup. A malformed state file is preserved with a `.broken-<timestamp>` suffix and Workbench starts with clean state.
+
+## Window behavior
+
+The main window starts at 1520×960 and can restore as small as 720×520. Responsive breakpoints hide the auxiliary context tray and convert the Codex thread rail to a compact horizontal layout. F11 enters native fullscreen; Workbench snapshots the normal bounds first and reapplies them after Electron emits `leave-full-screen`, covering platforms that otherwise retain fullscreen-sized bounds after exit. Escape leaves fullscreen.
 
 ## Markdown project workflow
 

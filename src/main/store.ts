@@ -126,8 +126,6 @@ function cleanWorkspace(input: WorkspaceDraft, existing?: Workspace): Workspace 
     root: cleanRoot(input.root),
     commands: cleanCommands(input.commands ?? existing?.commands ?? []),
     contextItems: cleanContextItems(input.contextItems ?? existing?.contextItems ?? []),
-    codexModel: cleanText(input.codexModel ?? existing?.codexModel, 160) || null,
-    codexEffort: cleanText(input.codexEffort ?? existing?.codexEffort, 40) || null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -211,18 +209,6 @@ export class WorkbenchStore {
 
   saveSettings(settings: WorkbenchSettings): PersistedState {
     this.state.settings = cleanSettings(settings);
-    this.persist();
-    return this.getState();
-  }
-
-  saveCodexPreferences(workspaceId: string, model: string | null, effort: string | null): PersistedState {
-    const workspace = this.state.workspaces.find((item) => item.id === workspaceId);
-    if (!workspace) {
-      throw new Error('Workspace not found.');
-    }
-    workspace.codexModel = cleanText(model, 160) || null;
-    workspace.codexEffort = cleanText(effort, 40) || null;
-    workspace.updatedAt = new Date().toISOString();
     this.persist();
     return this.getState();
   }

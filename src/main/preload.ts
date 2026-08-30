@@ -18,8 +18,6 @@ const api: WorkbenchApi = {
   state: {
     get: () => ipcRenderer.invoke('state:get'),
     saveWorkspace: (draft) => ipcRenderer.invoke('state:save-workspace', draft),
-    saveCodexPreferences: (workspaceId, model, effort) =>
-      ipcRenderer.invoke('state:save-codex-preferences', workspaceId, model, effort),
     deleteWorkspace: (workspaceId) => ipcRenderer.invoke('state:delete-workspace', workspaceId),
     selectWorkspace: (workspaceId) => ipcRenderer.invoke('state:select-workspace', workspaceId),
     saveSettings: (settings) => ipcRenderer.invoke('state:save-settings', settings),
@@ -48,10 +46,13 @@ const api: WorkbenchApi = {
     listModels: (workspaceId) => ipcRenderer.invoke('codex:list-models', workspaceId),
     getRateLimits: (workspaceId) => ipcRenderer.invoke('codex:rate-limits', workspaceId),
     listThreads: (workspaceId) => ipcRenderer.invoke('codex:list-threads', workspaceId),
-    startThread: (workspaceId) => ipcRenderer.invoke('codex:start-thread', workspaceId),
+    startThread: (workspaceId, preference) => ipcRenderer.invoke('codex:start-thread', workspaceId, preference),
     resumeThread: (workspaceId, threadId) => ipcRenderer.invoke('codex:resume-thread', workspaceId, threadId),
     readThread: (workspaceId, threadId) => ipcRenderer.invoke('codex:read-thread', workspaceId, threadId),
-    startTurn: (workspaceId, threadId, text) => ipcRenderer.invoke('codex:start-turn', workspaceId, threadId, text),
+    updateThreadSettings: (workspaceId, threadId, preference) =>
+      ipcRenderer.invoke('codex:update-thread-settings', workspaceId, threadId, preference),
+    startTurn: (workspaceId, threadId, text, preference) =>
+      ipcRenderer.invoke('codex:start-turn', workspaceId, threadId, text, preference),
     interruptTurn: (workspaceId, threadId, turnId) => ipcRenderer.invoke('codex:interrupt-turn', workspaceId, threadId, turnId),
     reviewUncommitted: (workspaceId, threadId) => ipcRenderer.invoke('codex:review-uncommitted', workspaceId, threadId),
     archiveThread: (workspaceId, threadId) => ipcRenderer.invoke('codex:archive-thread', workspaceId, threadId),

@@ -36,17 +36,28 @@ test('persists a validated workspace and reloads it', () => {
     const reloaded = new WorkbenchStore(stateFile).getState();
     assert.equal(reloaded.selectedWorkspaceId, saved.workspaces[0].id);
     assert.equal(reloaded.workspaces[0].distro, 'Ubuntu');
+    assert.equal('codexModel' in reloaded.workspaces[0], false);
+    assert.equal('codexEffort' in reloaded.workspaces[0], false);
+  });
+});
 
-    const preferred = store.saveCodexPreferences(
-      saved.workspaces[0].id,
-      'gpt-5.6-terra',
-      'high',
-    );
-    assert.equal(preferred.workspaces[0].codexModel, 'gpt-5.6-terra');
-    assert.equal(preferred.workspaces[0].codexEffort, 'high');
-    const preferencesReloaded = new WorkbenchStore(stateFile).getState();
-    assert.equal(preferencesReloaded.workspaces[0].codexModel, 'gpt-5.6-terra');
-    assert.equal(preferencesReloaded.workspaces[0].codexEffort, 'high');
+test('drops legacy workspace-global Codex preferences when loading state', () => {
+  withTemporaryStore((_store, stateFile) => {
+    fs.writeFileSync(stateFile, JSON.stringify({
+      version: 1,
+      selectedWorkspaceId: 'legacy',
+      settings: {},
+      workspaces: [{
+        id: 'legacy', name: 'Legacy', description: '', icon: 'code', distro: 'Ubuntu',
+        root: '/home/dev/legacy', commands: [], contextItems: [],
+        codexModel: 'global-model', codexEffort: 'high',
+        createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+      }],
+    }), 'utf8');
+    const loaded = new WorkbenchStore(stateFile).getState();
+    assert.equal(loaded.workspaces.length, 1);
+    assert.equal('codexModel' in loaded.workspaces[0], false);
+    assert.equal('codexEffort' in loaded.workspaces[0], false);
   });
 });
 

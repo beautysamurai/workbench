@@ -8,14 +8,18 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 
 ### Added
 
-- Added workspace-level Codex model and reasoning-effort selectors backed by the installed Codex catalog.
+- Added Codex model and reasoning-effort selectors backed by the installed Codex catalog.
 - Added remaining primary Codex usage and reset-time indicators to the dashboard and Codex toolbar.
 - Added a Markdown-backed project task queue with safe default setup, GUI task entry, and a Send to Codex action.
 
 ### Changed
 
+- Model and reasoning-effort choices now belong to each Codex thread instead of the whole workspace.
+
 ### Fixed
 
+- Fixed fullscreen exit so it restores the prior small-window bounds, with a responsive layout down to 720×520.
+- Preserved a resumed thread's effective model when it is hidden or temporarily absent from the visible model catalog.
 - Fixed Codex thread creation, resume, and turn startup by sending approval and thread-sandbox settings in the app-server's required wire format.
 - Removed internal Codex reasoning-status rows from conversation logs while keeping user-facing progress and results visible.
 
