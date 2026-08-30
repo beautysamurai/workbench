@@ -140,6 +140,11 @@ test('reports each confirmed WSLg scale once and keeps watching when deferred', 
     },
   );
 
+  scheduler.flush();
+  assert.equal(reads, 5);
+  assert.equal(notifications, 0);
+  reads = 0;
+
   listener();
   listener();
   scheduler.flush();
@@ -171,31 +176,24 @@ test('reports each confirmed WSLg scale once and keeps watching when deferred', 
   assert.equal(notifications, 2);
 });
 
-test('waits out a partial WSLg layout before deciding the scale changed', () => {
-  let listener: () => void = () => { assert.fail('display change listener was not registered'); };
+test('keeps indeterminate WSLg reads distinct from a valid default scale', () => {
   let reads = 0;
   let notifications = 0;
   const scheduler = createTestScheduler();
   const dispose = watchWslgDisplayScaleChanges(
-    (nextListener) => {
-      listener = nextListener;
-      return () => {};
-    },
+    () => () => {},
     1.5,
     () => { notifications += 1; },
     {
       ...wslgOptions,
       readLog: () => {
         reads += 1;
-        return reads === 1
-          ? '[10:00:00.000] Client: DisplayLayoutChange: monitor count:0x1'
-          : homogeneousScaleLayout;
+        throw new Error('Weston log unavailable');
       },
       schedule: scheduler.schedule,
     },
   );
 
-  listener();
   scheduler.flush();
   assert.equal(reads, 5);
   assert.equal(notifications, 0);
@@ -205,6 +203,8 @@ test('waits out a partial WSLg layout before deciding the scale changed', () => 
 test('keeps polling when the first post-event WSLg layout is still stale', () => {
   let listener: () => void = () => { assert.fail('display change listener was not registered'); };
   let reads = 0;
+  let eventPhase = false;
+  let eventReads = 0;
   let notifications = 0;
   const scheduler = createTestScheduler();
   const dispose = watchWslgDisplayScaleChanges(
@@ -218,15 +218,45 @@ test('keeps polling when the first post-event WSLg layout is still stale', () =>
       ...wslgOptions,
       readLog: () => {
         reads += 1;
-        return reads === 1 ? homogeneousScaleLayout : mixedScaleLayout;
+        if (!eventPhase) return homogeneousScaleLayout;
+        eventReads += 1;
+        return eventReads === 1 ? homogeneousScaleLayout : mixedScaleLayout;
       },
       schedule: scheduler.schedule,
     },
   );
 
+  scheduler.flush();
+  assert.equal(reads, 5);
+  assert.equal(notifications, 0);
+  eventPhase = true;
   listener();
   scheduler.flush();
-  assert.equal(reads, 3);
+  assert.equal(eventReads, 3);
+  assert.equal(notifications, 1);
+  dispose();
+});
+
+test('settles again after ready when pre-ready scale detection missed', () => {
+  let reads = 0;
+  let notifications = 0;
+  const scheduler = createTestScheduler();
+  const dispose = watchWslgDisplayScaleChanges(
+    () => () => {},
+    null,
+    () => { notifications += 1; },
+    {
+      ...wslgOptions,
+      readLog: () => {
+        reads += 1;
+        return homogeneousScaleLayout;
+      },
+      schedule: scheduler.schedule,
+    },
+  );
+
+  scheduler.flush();
+  assert.equal(reads, 2);
   assert.equal(notifications, 1);
   dispose();
 });

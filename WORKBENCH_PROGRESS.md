@@ -914,3 +914,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; the portable suite ran 12 files and the full suite ran 13 files including WSL integration.
 - Next action: commit and publish the bounded-settling fix, resolve the finding with commit evidence, then complete fresh CI and exact-head automated re-review.
 - Blocker: none established.
+
+### 2026-08-30 16:33 JST — P1-004 separated indeterminate layouts and retried startup settling
+
+**CI and automated review evidence**
+
+- Commit `0cfcb94` passed both Linux verification jobs in 14–17 seconds and both Windows packaging jobs in 1 minute 43 seconds and 1 minute 44 seconds; this confirmed the deterministic scheduler correction on both workflow events.
+- Automated Codex review `5060139049` on `b07a81f` opened P2 thread `discussion_r3888675160`: a pre-ready incomplete layout could become complete before the watcher subscribed, leaving no later Electron event to trigger recalibration.
+- Automated Codex review `5060194815` on exact head `0cfcb94` opened P2 thread `discussion_r3888731072`: coercing an unreadable, truncated, or malformed layout to scale 1 could falsely confirm a restart transition.
+- Disposition: both accepted. A valid Electron-default layout and an indeterminate Weston read require different runtime behavior, and startup needs its own post-ready settling pass.
+
+**Scoped correction**
+
+- Internal detection now returns explicit `uniform`, `mixed`, or `indeterminate` layout states. A valid uniform scale 1 or mixed layout maps to Electron's default target; an indeterminate read is never treated as scale 1, never becomes a restart candidate, and only consumes one bounded settling read.
+- The display watcher starts one settling pass immediately after subscribing, in addition to reacting to later display events. If pre-ready configuration missed a partial layout that becomes a valid uniform fractional scale by `ready`, two matching post-ready reads offer the safe restart prompt.
+- Existing public parser/detection behavior remains compatible (`number | null`), explicit user scale switches still bypass Workbench management, and production timing remains five reads at 500 ms with cancellation on a newer event or app exit.
+
+**Verification after correction**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` | Focused detection/watcher file passed, including indeterminate-read suppression and post-ready recovery after a missed pre-ready scale; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 12 portable test files passed; exit `0`. |
+| passed | `npm run check && npm run build && git diff --check` | Strict type checks, all 13 full test files including WSL integration, production compilation/assets, and whitespace validation passed; exit `0`. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The real app completed its startup settling window on the current valid 150% layout without opening a false recalibration prompt and remained running until intentional SIGINT. Existing DBus/GPU warnings were non-fatal. |
+| passed | read-only Windows `Get-Process` title check | Exactly the expected `Workbench (Ubuntu-24.04)` host window was present during the startup smoke. |
+| passed | scoped Electron `pgrep` after shutdown | Exit `1` with no output; no task Electron process remained. |
+
+**Next action**
+
+- Commit and publish both accepted corrections, resolve both review threads with evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.

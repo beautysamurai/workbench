@@ -24,6 +24,15 @@ interface WslgScaleWatchOptions extends WslgScaleDetectionOptions {
 }
 
 type SubscribeToDisplayChanges = (listener: () => void) => () => void;
+type WslgLayoutScale =
+  | { kind: 'uniform'; scale: number }
+  | { kind: 'mixed' }
+  | { kind: 'indeterminate' };
+type WslgScaleTarget = number | 'default';
+
+const INDETERMINATE_LAYOUT = { kind: 'indeterminate' } as const;
+const MIXED_LAYOUT = { kind: 'mixed' } as const;
+const DEFAULT_SCALE_TARGET = 'default';
 
 function scheduleWithTimeout(callback: () => void, delayMs: number): () => void {
   const timer = setTimeout(callback, delayMs);
@@ -63,24 +72,24 @@ function readLogTail(path = WSLG_LOG_PATH): string {
   }
 }
 
-export function parseWslgPrimaryDisplayScale(log: string): number | null {
+function parseWslgLayoutScale(log: string): WslgLayoutScale {
   const layoutMarker = 'Client: DisplayLayoutChange';
   const latestLayoutStart = log.lastIndexOf(layoutMarker);
-  if (latestLayoutStart < 0) return null;
+  if (latestLayoutStart < 0) return INDETERMINATE_LAYOUT;
   const latestLayout = log.slice(latestLayoutStart);
   const declaredCountMatch = latestLayout.match(
     /Client: DisplayLayoutChange: monitor count:0x([0-9a-f]+)/i,
   );
-  if (!declaredCountMatch) return null;
+  if (!declaredCountMatch) return INDETERMINATE_LAYOUT;
   const declaredCount = Number.parseInt(declaredCountMatch[1], 16);
   const outputMarker = 'disp_monitor_validate_and_compute_layout:---OUTPUT---';
   const outputStart = latestLayout.indexOf(outputMarker);
-  if (outputStart < 0) return null;
+  if (outputStart < 0) return INDETERMINATE_LAYOUT;
   const inputLayout = latestLayout.slice(0, outputStart);
   const headers = [...inputLayout.matchAll(
     /rdpMonitor\[(\d+)\]: x:[^\r\n]*is_primary:(\d+)/g,
   )];
-  if (declaredCount < 1 || headers.length !== declaredCount) return null;
+  if (declaredCount < 1 || headers.length !== declaredCount) return INDETERMINATE_LAYOUT;
 
   const monitors = headers.map((header, index) => {
     const monitorIndex = header[1];
@@ -109,27 +118,41 @@ export function parseWslgPrimaryDisplayScale(log: string): number | null {
       residualScale: Math.round(residualScale * 1_000) / 1_000,
     };
   });
-  if (monitors.some((monitor) => monitor === null)) return null;
+  if (monitors.some((monitor) => monitor === null)) return INDETERMINATE_LAYOUT;
 
   const validMonitors = monitors.filter((monitor) => monitor !== null);
   const primary = validMonitors.find((monitor) => monitor.primary);
-  if (!primary) return null;
-  if (validMonitors.some((monitor) => monitor.residualScale !== primary.residualScale)) return null;
-  return primary.residualScale;
+  if (!primary) return INDETERMINATE_LAYOUT;
+  if (validMonitors.some((monitor) => monitor.residualScale !== primary.residualScale)) {
+    return MIXED_LAYOUT;
+  }
+  return { kind: 'uniform', scale: primary.residualScale };
 }
 
-export function detectWslgDisplayScale({
+export function parseWslgPrimaryDisplayScale(log: string): number | null {
+  const layout = parseWslgLayoutScale(log);
+  return layout.kind === 'uniform' ? layout.scale : null;
+}
+
+function detectWslgLayoutScale({
   env = process.env,
   platform = process.platform,
   readLog = readLogTail,
-}: WslgScaleDetectionOptions = {}): number | null {
-  if (!isWslgEnvironment(env, platform)) return null;
+}: WslgScaleDetectionOptions = {}): WslgLayoutScale {
+  if (!isWslgEnvironment(env, platform)) return INDETERMINATE_LAYOUT;
 
   try {
-    return parseWslgPrimaryDisplayScale(readLog());
+    return parseWslgLayoutScale(readLog());
   } catch {
-    return null;
+    return INDETERMINATE_LAYOUT;
   }
+}
+
+export function detectWslgDisplayScale(
+  options: WslgScaleDetectionOptions = {},
+): number | null {
+  const layout = detectWslgLayoutScale(options);
+  return layout.kind === 'uniform' ? layout.scale : null;
 }
 
 export function configureWslgDisplayScale(
@@ -140,8 +163,9 @@ export function configureWslgDisplayScale(
 
   // WSLg can leave fractional Windows scaling unapplied to its Chromium client.
   // Align Chromium before `ready` so fullscreen geometry and pointer input agree.
-  const scale = detectWslgDisplayScale(options);
-  if (scale === null || scale === 1) return null;
+  const layout = detectWslgLayoutScale(options);
+  if (layout.kind !== 'uniform' || layout.scale === 1) return null;
+  const scale = layout.scale;
   commandLine.appendSwitch(DEVICE_SCALE_FACTOR_SWITCH, String(scale));
   return scale;
 }
@@ -160,9 +184,9 @@ export function watchWslgDisplayScaleChanges(
 ): () => void {
   if (!isWslgEnvironment(env, platform)) return () => {};
 
-  const effectiveInitialScale = initialScale ?? 1;
-  let candidateScale: number | undefined;
-  let reportedScale: number | undefined;
+  const initialTarget: WslgScaleTarget = initialScale ?? DEFAULT_SCALE_TARGET;
+  let candidateTarget: WslgScaleTarget | undefined;
+  let reportedTarget: WslgScaleTarget | undefined;
   let settleReadsRemaining = 0;
   let confirmationExtended = false;
   let cancelInspection: (() => void) | null = null;
@@ -181,26 +205,38 @@ export function watchWslgDisplayScaleChanges(
     cancelInspection = null;
     if (stopped) return;
 
-    const detectedScale = detectWslgDisplayScale({
+    const detectedLayout = detectWslgLayoutScale({
       ...detectionOptions,
       env,
       platform,
-    }) ?? 1;
+    });
     settleReadsRemaining -= 1;
-    if (detectedScale === effectiveInitialScale) {
-      candidateScale = undefined;
+    if (detectedLayout.kind === 'indeterminate') {
+      candidateTarget = undefined;
       if (settleReadsRemaining > 0) {
         cancelInspection = schedule(inspectScale, debounceMs);
-      } else {
-        reportedScale = undefined;
       }
       return;
     }
 
-    // Confirm the new value twice. Weston writes layouts incrementally, so a
-    // single null result can be a transient partial record rather than scale 1.
-    if (candidateScale !== detectedScale) {
-      candidateScale = detectedScale;
+    const detectedTarget: WslgScaleTarget = detectedLayout.kind === 'uniform'
+      && detectedLayout.scale !== 1
+      ? detectedLayout.scale
+      : DEFAULT_SCALE_TARGET;
+    if (detectedTarget === initialTarget) {
+      candidateTarget = undefined;
+      if (settleReadsRemaining > 0) {
+        cancelInspection = schedule(inspectScale, debounceMs);
+      } else {
+        reportedTarget = undefined;
+      }
+      return;
+    }
+
+    // Confirm a new valid target twice. Indeterminate reads never represent
+    // scale 1 because Weston may still be appending the latest layout.
+    if (candidateTarget !== detectedTarget) {
+      candidateTarget = detectedTarget;
       if (settleReadsRemaining > 0 || !confirmationExtended) {
         confirmationExtended = settleReadsRemaining <= 0;
         cancelInspection = schedule(inspectScale, debounceMs);
@@ -208,15 +244,15 @@ export function watchWslgDisplayScaleChanges(
       return;
     }
 
-    candidateScale = undefined;
-    if (reportedScale === detectedScale) return;
-    reportedScale = detectedScale;
+    candidateTarget = undefined;
+    if (reportedTarget === detectedTarget) return;
+    reportedTarget = detectedTarget;
     onScaleChanged();
   };
 
   const handleDisplayChange = (): void => {
     if (stopped) return;
-    candidateScale = undefined;
+    candidateTarget = undefined;
     settleReadsRemaining = SCALE_CHANGE_SETTLE_READS;
     confirmationExtended = false;
     cancelInspection?.();
@@ -224,5 +260,6 @@ export function watchWslgDisplayScaleChanges(
   };
 
   unsubscribe = subscribe(handleDisplayChange);
+  handleDisplayChange();
   return dispose;
 }
