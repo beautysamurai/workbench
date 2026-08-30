@@ -42,14 +42,21 @@ function readLogTail(path = WSLG_LOG_PATH): string {
 export function parseWslgPrimaryDisplayScale(log: string): number | null {
   const layoutMarker = 'Client: DisplayLayoutChange';
   const latestLayoutStart = log.lastIndexOf(layoutMarker);
-  const latestLayout = latestLayoutStart >= 0 ? log.slice(latestLayoutStart) : log;
+  if (latestLayoutStart < 0) return null;
+  const latestLayout = log.slice(latestLayoutStart);
+  const declaredCountMatch = latestLayout.match(
+    /Client: DisplayLayoutChange: monitor count:0x([0-9a-f]+)/i,
+  );
+  if (!declaredCountMatch) return null;
+  const declaredCount = Number.parseInt(declaredCountMatch[1], 16);
   const outputMarker = 'disp_monitor_validate_and_compute_layout:---OUTPUT---';
   const outputStart = latestLayout.indexOf(outputMarker);
-  const inputLayout = outputStart >= 0 ? latestLayout.slice(0, outputStart) : latestLayout;
+  if (outputStart < 0) return null;
+  const inputLayout = latestLayout.slice(0, outputStart);
   const headers = [...inputLayout.matchAll(
     /rdpMonitor\[(\d+)\]: x:[^\r\n]*is_primary:(\d+)/g,
   )];
-  if (headers.length === 0) return null;
+  if (declaredCount < 1 || headers.length !== declaredCount) return null;
 
   const monitors = headers.map((header, index) => {
     const monitorIndex = header[1];

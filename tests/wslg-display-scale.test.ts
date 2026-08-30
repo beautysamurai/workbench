@@ -44,6 +44,18 @@ test('does not force a process-wide scale for a mixed-scale monitor layout', () 
   assert.equal(parseWslgPrimaryDisplayScale(mixedScaleLayout), null);
 });
 
+test('rejects incomplete or count-mismatched WSLg layout records', () => {
+  const incompleteLayout = homogeneousScaleLayout.slice(
+    0,
+    homogeneousScaleLayout.indexOf('[10:00:00.001] rdpMonitor[1]: x:'),
+  );
+  assert.equal(parseWslgPrimaryDisplayScale(incompleteLayout), null);
+  assert.equal(
+    parseWslgPrimaryDisplayScale(homogeneousScaleLayout.replace('monitor count:0x2', 'monitor count:0x3')),
+    null,
+  );
+});
+
 test('detects scale only for a WSLg Linux process and tolerates an unavailable log', () => {
   const wslg = {
     env: { WSL_INTEROP: '/run/WSL/1_interop', WAYLAND_DISPLAY: 'wayland-0' },

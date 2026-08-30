@@ -799,3 +799,25 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run check && npm run build && git diff --check` passed strict compilation, all 13 test files, the production build, and whitespace validation; exit `0`.
 - The production auto-detection and real Windows pointer harness were rerun after the mixed-scale guard. The active homogeneous layout still selected `1.5`; Windows and Electron agreed on fullscreen `(0,0) 2560×1440`, all seven host/client y coordinates remained exact, and 900×700 restored.
 - Final next action: commit and push the accepted finding, resolve the review thread with the commit evidence, and complete final-head CI plus automated re-review.
+
+### 2026-08-30 14:28 JST — P1-004 accepted partial-layout review finding
+
+**Final-head re-review evidence**
+
+- Commit `9846323` passed both final-head Linux verification jobs in 18 seconds and both Windows packaging jobs in 1 minute 47 seconds and 1 minute 55 seconds.
+- Automated Codex re-review `5060020441` completed on exact head `9846323` and opened one P2 thread (`discussion_r3888555319`): a partially written multi-monitor layout could contain one complete monitor block but still declare more monitors, allowing a stale process-wide scale before the remaining block was written.
+- Disposition: accepted. This is a real startup race against a log that WSLg updates in place.
+
+**Scoped correction and verification plan**
+
+- Scale detection now requires the latest `DisplayLayoutChange` record to declare a positive hexadecimal monitor count, contain exactly that many input monitor headers, and reach the input/output validation boundary. Incomplete, count-mismatched, mixed-scale, and malformed layouts all preserve Electron defaults.
+- Focused regressions cover both a truncated two-monitor record and a completed record whose declared count exceeds its monitor blocks.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js` passed after the correction; exit `0`. The current completed active layout still detects `1.5`.
+- Next action: complete broad checks and the real pointer journey, then commit, push, resolve the thread, and require another exact-head CI/re-review cycle.
+- Blocker: none established.
+
+**Verification after correction**
+
+- `npm run check && npm run build && git diff --check` passed strict compilation, all 13 test files, production compilation/assets, and whitespace validation; exit `0`.
+- The bounded production auto-detection/pointer journey was rerun after the completion guard: Electron retained scale `1.5`, Windows and Electron both reached fullscreen `(0,0) 2560×1440`, all seven y coordinates remained exact, and the 900×700 window restored.
+- Final next action: commit and publish the race fix, resolve the finding with evidence, and complete one more final-head CI and automated re-review.
