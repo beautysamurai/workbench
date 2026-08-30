@@ -26,6 +26,13 @@ test('keeps valid model preferences and repairs stale selections from the live c
   assert.deepEqual(changeCodexModelPreference(models, { model: 'sol', effort: 'high' }, 'model', 'terra'), { model: 'terra', effort: 'medium' });
 });
 
+test('preserves the effective model of an existing thread when it is unavailable in the visible catalog', () => {
+  assert.deepEqual(
+    chooseCodexModelPreference(models, { model: 'hidden-model', effort: 'ultra' }, true),
+    { model: 'hidden-model', effort: 'ultra' },
+  );
+});
+
 test('reports the remaining primary Codex quota and accepts rolling notifications', () => {
   const limits: CodexRateLimits = {
     rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 27.4, windowDurationMins: 300, resetsAt: 2_000_000_000 }, secondary: null },

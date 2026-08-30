@@ -659,6 +659,7 @@ function sessionModelPreference(workspace: Workspace, threadId: string | null): 
   return chooseCodexModelPreference(
     ui.codexModels.get(workspace.distro) ?? [],
     ui.codexPreferences.get(workspace.id, threadId),
+    threadId !== null,
   );
 }
 
@@ -672,14 +673,21 @@ function renderCodexControls(workspace: Workspace, threadId: string | null): str
   const remaining = remainingUsagePercent(ui.rateLimits.get(workspace.distro));
   const reset = primaryRateLimit(ui.rateLimits.get(workspace.distro))?.primary?.resetsAt;
   const usage = remaining === null ? (loading ? 'Loading usage…' : 'Usage unavailable') : `${remaining}% remaining`;
-  const modelOptions = models.map((model) => `<option value="${escapeHtml(model.model)}" ${model.model === preference.model ? 'selected' : ''}>${escapeHtml(model.displayName || model.model)}</option>`).join('');
-  const effortOptions = efforts.map((option) => `<option value="${escapeHtml(option.reasoningEffort)}" ${option.reasoningEffort === preference.effort ? 'selected' : ''}>${escapeHtml(titleCase(option.reasoningEffort))}</option>`).join('');
+  const unavailableModel = preference.model && !selected ? preference.model : null;
+  const unavailableModelOption = unavailableModel
+    ? `<option value="${escapeHtml(unavailableModel)}" selected disabled>${escapeHtml(unavailableModel)} (Unavailable)</option>`
+    : '';
+  const modelOptions = unavailableModelOption + models.map((model) => `<option value="${escapeHtml(model.model)}" ${model.model === preference.model ? 'selected' : ''}>${escapeHtml(model.displayName || model.model)}</option>`).join('');
+  const unavailableEffortOption = unavailableModel && preference.effort
+    ? `<option value="${escapeHtml(preference.effort)}" selected disabled>${escapeHtml(titleCase(preference.effort))} (Unavailable)</option>`
+    : '';
+  const effortOptions = unavailableEffortOption + efforts.map((option) => `<option value="${escapeHtml(option.reasoningEffort)}" ${option.reasoningEffort === preference.effort ? 'selected' : ''}>${escapeHtml(titleCase(option.reasoningEffort))}</option>`).join('');
 
   return `
     <div class="codex-config-bar">
       <span class="codex-config-scope">${threadId ? 'This thread' : 'New thread'}</span>
       <label class="codex-selector"><span>Model</span><select data-codex-setting="model" aria-label="Codex session model" ${!models.length || loading ? 'disabled' : ''}>${modelOptions || '<option>Unavailable</option>'}</select></label>
-      <label class="codex-selector"><span>Reasoning</span><select data-codex-setting="effort" aria-label="Codex session reasoning effort" ${!efforts.length || loading ? 'disabled' : ''}>${effortOptions || '<option>Default</option>'}</select></label>
+      <label class="codex-selector"><span>Reasoning</span><select data-codex-setting="effort" aria-label="Codex session reasoning effort" ${unavailableModel || !efforts.length || loading ? 'disabled' : ''}>${effortOptions || '<option>Default</option>'}</select></label>
       <div class="codex-usage" title="Codex primary usage window">${icon('chart', 13)}<span><strong>${escapeHtml(usage)}</strong>${reset ? `<small>Resets ${escapeHtml(formatResetTime(reset))}</small>` : ''}</span></div>
       ${error ? `<span class="codex-metadata-error" title="${escapeHtml(error)}">${icon('alert', 12)} Metadata unavailable</span>` : ''}
       <button class="icon-button" data-action="refresh-codex-metadata" title="Refresh models and usage" ${loading ? 'disabled' : ''}>${icon('refresh', 13)}</button>

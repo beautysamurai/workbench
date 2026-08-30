@@ -8,8 +8,8 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** P1-004 — GUI bugfix (`in progress` at pull-request delivery)
 - **Next task:** P1-004 — complete pull-request CI and automated review
-- **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread
-- **Next action:** Open the P1-004 pull request and complete applicable CI plus automated review
+- **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread without replacing unavailable effective models
+- **Next action:** Publish the accepted PR #3 review fix, then complete final-head CI and automated re-review
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -714,4 +714,24 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and publish this resumed-delivery record, open the P1-004 pull request, then complete every applicable CI job and automated review.
+- Blocker: none established.
+
+### 2026-08-30 10:46 JST — P1-004 accepted the final-head unavailable-model review finding
+
+**Remote evidence and finding**
+
+- PR #3 was opened at `https://github.com/beautysamurai/workbench/pull/3` with head `d46ed77609c91e7da074e5fbe16a5efcf22c864f`.
+- Push- and pull-request-event Linux verification jobs passed in 18 and 17 seconds. Both Windows packaging jobs passed in 1 minute 44 seconds and 1 minute 20 seconds.
+- Automated Codex review `5059680912` completed on exact head `d46ed77` and opened one unresolved P2 thread: a resumed thread whose effective model is hidden or absent from the visible catalog falls back to the default model before the next turn.
+- Accepted. `model/list` intentionally excludes hidden models, while `sessionModelPreference` previously repaired any unknown model on every render and turn submission. This could silently override the model returned by `thread/resume`.
+
+**Scoped correction and verification plan**
+
+- Existing threads now preserve their effective model/reasoning preference when the model is unavailable in the visible catalog. The selector exposes that value as an unavailable option until the user explicitly chooses an available model; new-thread drafts still repair stale selections to a visible default.
+- A focused metadata regression test covers the preserved existing-thread path, and the changelog/task evidence records the user-visible correction.
+- The initial focused command, `npm run build:tests && node --test dist-tests/tests/codex-metadata.test.js`, exited `1` after successful compilation because it used the wrong `dist-tests` output path; no test ran. The corrected `node --test dist-test/tests/codex-metadata.test.js` passed the focused file.
+- `npm run check` passed strict main/renderer type checks and all 12 full compiled test files, including the new regression and WSL integration suite; exit `0`.
+- `npm run build` completed the clean production compilation and asset copy; exit `0`. `git diff --check` also passed.
+- Ubuntu's GitHub CLI 2.45.0 failed the explicit reviewer mutation against retired Projects Classic fields. The per-user CLI was upgraded to official 2.98.0 after its release archive matched GitHub's published SHA-256 digest; authentication remained active and the explicit Copilot review request succeeded.
+- Next action: commit and push the accepted fix, then wait for final-head CI and automated re-review.
 - Blocker: none established.

@@ -42,9 +42,9 @@ States: `pending` · `in progress` · `blocked` · `done`
 - **Acceptance criteria:**
   - [x] Full screen, a small window can be switched to each other without problem.
   - [x] Model should be determined at the terminal level, not globally.
-- **Evidence:** F11 and Escape now round-trip native fullscreen through an explicit normal-bounds snapshot; a production Electron journey returned exactly from fullscreen to 720×520 with no horizontal overflow. Model/reasoning choices are keyed by Codex thread, hydrated from start/resume responses, updated with `thread/settings/update`, and no longer stored on the workspace. Two production-renderer threads retained distinct Terra/medium and Sol/high choices. Focused tests, the installed app-server smoke, strict checks, and the production build passed.
+- **Evidence:** F11 and Escape now round-trip native fullscreen through an explicit normal-bounds snapshot; a production Electron journey returned exactly from fullscreen to 720×520 with no horizontal overflow. Model/reasoning choices are keyed by Codex thread, hydrated from start/resume responses, preserved when unavailable in the visible catalog, updated with `thread/settings/update`, and no longer stored on the workspace. Two production-renderer threads retained distinct Terra/medium and Sol/high choices. Focused tests, the installed app-server smoke, strict checks, and the production build passed.
 - **Hypothesis:** Confirmed root causes: the 1080×700 minimum and fixed three-column layout prevented a genuinely small restored window, WSLg Electron retained fullscreen-sized bounds after exit, and all Codex requests read one persisted workspace preference.
-- **Next action:** Open the pull request and complete applicable CI plus automated review on the published `codex/p1-004-gui-bugfix` branch.
+- **Next action:** Publish the accepted unavailable-model review fix, then complete final-head CI and automated re-review on PR #3.
 - **Blocker:** None established.
 
 

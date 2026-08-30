@@ -8,9 +8,14 @@ import type {
 export function chooseCodexModelPreference(
   models: CodexModelInfo[],
   preference: CodexModelPreference | null,
+  preserveUnavailable = false,
 ): CodexModelPreference {
   const visible = models.filter((model) => !model.hidden);
-  const selected = visible.find((model) => model.model === preference?.model)
+  const preferred = visible.find((model) => model.model === preference?.model);
+  if (!preferred && preserveUnavailable && preference?.model) {
+    return { model: preference.model, effort: preference.effort };
+  }
+  const selected = preferred
     ?? visible.find((model) => model.isDefault)
     ?? visible[0];
   if (!selected) return {
