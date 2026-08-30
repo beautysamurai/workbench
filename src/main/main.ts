@@ -4,6 +4,11 @@ import { CodexAppServerManager } from './codex-app-server';
 import { registerIpc } from './ipc';
 import { WorkbenchStore } from './store';
 import { TerminalManager } from './terminal-manager';
+import {
+  handleWindowShortcut,
+  WORKBENCH_MIN_WINDOW_HEIGHT,
+  WORKBENCH_MIN_WINDOW_WIDTH,
+} from './window-behavior';
 
 let mainWindow: BrowserWindow | null = null;
 let disposeIpc: (() => void) | null = null;
@@ -14,8 +19,8 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1520,
     height: 960,
-    minWidth: 1080,
-    minHeight: 700,
+    minWidth: WORKBENCH_MIN_WINDOW_WIDTH,
+    minHeight: WORKBENCH_MIN_WINDOW_HEIGHT,
     show: false,
     backgroundColor: '#0a0d12',
     title: 'Workbench',
@@ -45,8 +50,12 @@ function createWindow(): BrowserWindow {
       if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url);
     }
   });
-  window.webContents.on('before-input-event', (_event, input) => {
-    if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+  window.webContents.on('before-input-event', (event, input) => {
+    if (handleWindowShortcut(window, input)) {
+      event.preventDefault();
+      return;
+    }
+    if (input.type === 'keyDown' && (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i'))) {
       window.webContents.toggleDevTools();
     }
   });

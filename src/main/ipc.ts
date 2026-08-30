@@ -11,6 +11,7 @@ import type {
   ActionResult,
   CodexConnectionStatus,
   CodexEventEnvelope,
+  CodexModelPreference,
   ProjectTaskDraft,
   CodexServerRequestEnvelope,
   ContextItem,
@@ -21,6 +22,7 @@ import type {
 } from '../shared/types';
 import { CodexAppServerManager } from './codex-app-server';
 import { CODEX_THREAD_SANDBOX_MODE, toCodexApprovalPolicy } from './codex-protocol';
+import { codexThreadModelOverrides, codexThreadStartModelOverrides } from './codex-session';
 import { buildContextPack, suggestedContextFileName } from './context-service';
 import { addProjectTask, initializeProjectSystem, inspectProjectSystem } from './project-system';
 import { uncToWslPath, toWslUnc } from './path-utils';
@@ -48,7 +50,6 @@ function removeAllWorkbenchHandlers(): void {
   const channels = [
     'state:get',
     'state:save-workspace',
-    'state:save-codex-preferences',
     'state:delete-workspace',
     'state:select-workspace',
     'state:save-settings',
@@ -72,6 +73,7 @@ function removeAllWorkbenchHandlers(): void {
     'codex:start-thread',
     'codex:resume-thread',
     'codex:read-thread',
+    'codex:update-thread-settings',
     'codex:start-turn',
     'codex:interrupt-turn',
     'codex:review-uncommitted',
@@ -91,11 +93,6 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
 
   ipcMain.handle('state:get', () => store.getState());
   ipcMain.handle('state:save-workspace', (_event, draft: WorkspaceDraft) => store.saveWorkspace(draft));
-  ipcMain.handle(
-    'state:save-codex-preferences',
-    (_event, workspaceId: string, model: string | null, effort: string | null) =>
-      store.saveCodexPreferences(String(workspaceId), model, effort),
-  );
   ipcMain.handle('state:delete-workspace', (_event, workspaceId: string) => store.deleteWorkspace(String(workspaceId)));
   ipcMain.handle('state:select-workspace', (_event, workspaceId: string | null) => store.selectWorkspace(workspaceId));
   ipcMain.handle('state:save-settings', (_event, settings: WorkbenchSettings) => store.saveSettings(settings));
@@ -188,7 +185,7 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
       sourceKinds: ['appServer', 'cli', 'vscode'],
     });
   });
-  ipcMain.handle('codex:start-thread', (_event, workspaceId: string) => {
+  ipcMain.handle('codex:start-thread', (_event, workspaceId: string, preference: CodexModelPreference) => {
     const selected = workspace(workspaceId);
     const settings = store.getState().settings;
     return codex.request(selected.distro, 'thread/start', {
@@ -196,7 +193,7 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
       approvalPolicy: toCodexApprovalPolicy(settings.approvalPolicy),
       sandbox: CODEX_THREAD_SANDBOX_MODE,
       serviceName: 'workbench',
-      ...(selected.codexModel ? { model: selected.codexModel } : {}),
+      ...codexThreadStartModelOverrides(preference),
     });
   });
   ipcMain.handle('codex:resume-thread', (_event, workspaceId: string, threadId: string) => {
@@ -207,7 +204,6 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
       cwd: selected.root,
       approvalPolicy: toCodexApprovalPolicy(settings.approvalPolicy),
       sandbox: CODEX_THREAD_SANDBOX_MODE,
-      ...(selected.codexModel ? { model: selected.codexModel } : {}),
     });
   });
   ipcMain.handle('codex:read-thread', (_event, workspaceId: string, threadId: string) => {
@@ -217,7 +213,17 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
       includeTurns: true,
     });
   });
-  ipcMain.handle('codex:start-turn', (_event, workspaceId: string, threadId: string, text: string) => {
+  ipcMain.handle(
+    'codex:update-thread-settings',
+    (_event, workspaceId: string, threadId: string, preference: CodexModelPreference) => {
+      const selected = workspace(workspaceId);
+      return codex.request(selected.distro, 'thread/settings/update', {
+        threadId: String(threadId),
+        ...codexThreadModelOverrides(preference),
+      });
+    },
+  );
+  ipcMain.handle('codex:start-turn', (_event, workspaceId: string, threadId: string, text: string, preference: CodexModelPreference) => {
     const selected = workspace(workspaceId);
     const settings = store.getState().settings;
     const input = String(text).trim();
@@ -232,8 +238,7 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
         writableRoots: [selected.root],
         networkAccess: settings.networkAccess,
       },
-      ...(selected.codexModel ? { model: selected.codexModel } : {}),
-      ...(selected.codexEffort ? { effort: selected.codexEffort } : {}),
+      ...codexThreadModelOverrides(preference),
     });
   });
   ipcMain.handle('codex:interrupt-turn', async (_event, workspaceId: string, threadId: string, turnId: string) => {

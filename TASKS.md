@@ -29,22 +29,23 @@ States: `pending` · `in progress` · `blocked` · `done`
   - [x] Model should be selected easily.
   - [x] For a coding project, it should load markdown system and also create such a system by default. And should have a clear and easy slot to write tasks and pop/offer task queues not from markdowns directly but on GUI.
   - [x] Should display the rest usage limit.
-- **Evidence:** The installed Codex catalog now populates workspace-level model and reasoning controls, and the selected values flow into thread/resume/turn requests. New workspaces default to safe, non-overwriting setup of `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`; the dashboard parses the queue, adds tasks through a GUI form, and offers them to the Codex composer. Primary remaining usage and reset time load from app-server responses and rolling notifications. Focused tests, strict checks, production build, live launch, and an offscreen production-renderer journey all passed.
+- **Evidence:** The installed Codex catalog now populates model and reasoning controls, and selected values flow into Codex thread and turn requests. New workspaces default to safe, non-overwriting setup of `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md`; the dashboard parses the queue, adds tasks through a GUI form, and offers them to the Codex composer. Primary remaining usage and reset time load from app-server responses and rolling notifications. Focused tests, strict checks, production build, live launch, and an offscreen production-renderer journey all passed.
 - **Hypothesis:** Confirmed. A typed metadata bridge plus a fixed-filename, `realpath`-guarded Markdown service provides the requested UX without making renderer file access broad or replacing Markdown as the durable project record.
 - **Next action:** P0-003 — Establish a trustworthy automated verification baseline.
 - **Blocker:** None established.
 
 ### P1-004 — GUI bugfix
 
-- **State:** pending
+- **State:** done
 - **Objective:** To fix GUI bugs
 - **Reported or observed symptom:** Full screen mode doesn't work well.
 - **Acceptance criteria:**
-  - [ ] Full screen, a small window can be switched to each other without problem.
-- **Evidence:** 
-- **Hypothesis:** 
-- **Next action:** 
-- **Blocker:** 
+  - [x] Full screen, a small window can be switched to each other without problem.
+  - [x] Model should be determined at the terminal level, not globally.
+- **Evidence:** F11 and Escape now round-trip native fullscreen through an explicit normal-bounds snapshot; a production Electron journey returned exactly from fullscreen to 720×520 with no horizontal overflow. Model/reasoning choices are keyed by Codex thread, hydrated from start/resume responses, updated with `thread/settings/update`, and no longer stored on the workspace. Two production-renderer threads retained distinct Terra/medium and Sol/high choices. Focused tests, the installed app-server smoke, strict checks, and the production build passed.
+- **Hypothesis:** Confirmed root causes: the 1080×700 minimum and fixed three-column layout prevented a genuinely small restored window, WSLg Electron retained fullscreen-sized bounds after exit, and all Codex requests read one persisted workspace preference.
+- **Next action:** P0-004 — Review main/preload/renderer and IPC security.
+- **Blocker:** None established.
 
 
 ## Queue

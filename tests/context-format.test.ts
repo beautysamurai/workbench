@@ -16,8 +16,6 @@ const workspace: Workspace = {
     { id: 'link', type: 'url', label: 'Documentation', value: 'https://example.com/docs', includeContent: true },
     { id: 'file', type: 'file', label: 'README', value: 'README.md', includeContent: true },
   ],
-  codexModel: null,
-  codexEffort: null,
   createdAt: '2026-08-28T00:00:00.000Z',
   updatedAt: '2026-08-28T00:00:00.000Z',
 };

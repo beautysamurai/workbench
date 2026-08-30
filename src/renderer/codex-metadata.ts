@@ -1,31 +1,41 @@
 import type {
   CodexModelInfo,
+  CodexModelPreference,
   CodexRateLimits,
   CodexRateLimitSnapshot,
-  Workspace,
 } from '../shared/types.js';
-
-export interface CodexModelPreference {
-  model: string | null;
-  effort: string | null;
-}
 
 export function chooseCodexModelPreference(
   models: CodexModelInfo[],
-  workspace: Pick<Workspace, 'codexModel' | 'codexEffort'>,
+  preference: CodexModelPreference | null,
 ): CodexModelPreference {
   const visible = models.filter((model) => !model.hidden);
-  const selected = visible.find((model) => model.model === workspace.codexModel)
+  const selected = visible.find((model) => model.model === preference?.model)
     ?? visible.find((model) => model.isDefault)
     ?? visible[0];
-  if (!selected) return { model: null, effort: null };
+  if (!selected) return {
+    model: preference?.model ?? null,
+    effort: preference?.effort ?? null,
+  };
   const efforts = selected.supportedReasoningEfforts.map((option) => option.reasoningEffort);
   return {
     model: selected.model,
-    effort: workspace.codexEffort && efforts.includes(workspace.codexEffort)
-      ? workspace.codexEffort
+    effort: preference?.effort && efforts.includes(preference.effort)
+      ? preference.effort
       : selected.defaultReasoningEffort || efforts[0] || null,
   };
+}
+
+export function changeCodexModelPreference(
+  models: CodexModelInfo[],
+  current: CodexModelPreference,
+  setting: 'model' | 'effort',
+  value: string,
+): CodexModelPreference {
+  if (setting === 'model') {
+    return chooseCodexModelPreference(models, { model: value, effort: null });
+  }
+  return chooseCodexModelPreference(models, { model: current.model, effort: value });
 }
 
 export function primaryRateLimit(limits: CodexRateLimits | null | undefined): CodexRateLimitSnapshot | null {

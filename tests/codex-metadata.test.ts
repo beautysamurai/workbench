@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CodexModelInfo, CodexRateLimits } from '../src/shared/types';
 import {
+  changeCodexModelPreference,
   chooseCodexModelPreference,
   rateLimitsFromNotification,
   remainingUsagePercent,
@@ -20,8 +21,9 @@ const models: CodexModelInfo[] = [
 ];
 
 test('keeps valid model preferences and repairs stale selections from the live catalog', () => {
-  assert.deepEqual(chooseCodexModelPreference(models, { codexModel: 'sol', codexEffort: 'high' }), { model: 'sol', effort: 'high' });
-  assert.deepEqual(chooseCodexModelPreference(models, { codexModel: 'removed', codexEffort: 'ultra' }), { model: 'sol', effort: 'low' });
+  assert.deepEqual(chooseCodexModelPreference(models, { model: 'sol', effort: 'high' }), { model: 'sol', effort: 'high' });
+  assert.deepEqual(chooseCodexModelPreference(models, { model: 'removed', effort: 'ultra' }), { model: 'sol', effort: 'low' });
+  assert.deepEqual(changeCodexModelPreference(models, { model: 'sol', effort: 'high' }, 'model', 'terra'), { model: 'terra', effort: 'medium' });
 });
 
 test('reports the remaining primary Codex quota and accepts rolling notifications', () => {

@@ -8,8 +8,8 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** None
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-001 through P0-003 are complete; explicit fail-closed test discovery and non-publishing Windows packaging passed complete push- and pull-request-event workflows, artifact upload, and automated re-review on PR #2's correction head
-- **Next action:** Publish the accepted applicable-CI review fix on PR #1, confirm both workflow events and automated re-review, then hand off the review-clean workflow documentation PR for separately authorized merge
+- **Verified state:** P1-004 is locally complete; fullscreen restores the prior small bounds, the responsive layout is usable at 720×520, and Codex model/reasoning choices are isolated per thread
+- **Next action:** Deliver P1-004 through its feature-branch pull request, complete applicable CI and automated review, then continue with P0-004
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -598,6 +598,64 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Both final-head workflow events and automated re-review remain required after this fix is committed and published. Their final state belongs in the PR body and handoff without another evidence-only commit.
 - Merge of PR #1 remains separately authorized and was not performed.
 - Blocker: none established while the review fix and final verification remain actionable.
+
+### 2026-08-30 09:45 JST — P1-004 restored compact window modes and thread-scoped Codex models
+
+**Environment**
+
+- Platform / WSL distribution: WSL2, Ubuntu-24.04, Linux x64 (`6.6.87.2-microsoft-standard-WSL2`)
+- Node version and executable: `v22.23.2`, `/home/kabes/.nvm/versions/node/v22.23.2/bin/node`
+- Package manager version and executable: npm `10.9.8`, `/home/kabes/.nvm/versions/node/v22.23.2/bin/npm`; npm selected from `package-lock.json`
+- Electron version: `44.0.0`
+- Base commit / branch: `8994b32` / `codex/p1-004-gui-bugfix`, created in an isolated clean worktree from fetched `origin/main`
+- Initial repository state: the primary checkout had unrelated, uncommitted P0-002 enhancements on stale branch `codex/automate-pr-delivery`; those files were left untouched. The isolated P1-004 worktree began clean.
+
+**Observed behavior**
+
+- Goal: switch reliably between fullscreen and a genuinely small window, and keep each Codex session's model choice independent.
+- Reproduction commands: source assertions read `src/main/main.ts` and `src/main/ipc.ts`, then failed when the window minimum exceeded 760×560 or any request read `selected.codexModel`.
+- Expected: a usable compact restored window and model/reasoning values owned by the active Codex thread.
+- Actual before the fix: `minWidth: 1080`, `minHeight: 700`, and six model request sites read shared workspace state. The first native Electron smoke also showed a second window bug: after entering fullscreen from 720×520, WSLg emitted `leave-full-screen` but left bounds at 3832×2156.
+- Exit code and first meaningful errors: both source reproductions exited `1` (`BrowserWindow cannot restore to the required small-window envelope`; `Codex requests read model selection from shared workspace state`). The first production Electron round trip exited `1` with `Fullscreen did not restore the small bounds`.
+
+**Diagnosis**
+
+- Classification: Electron window-state/restored-layout behavior plus Codex renderer/preload/IPC session state.
+- Evidence: fixed three-column CSS had only one 1220px breakpoint; Electron relied entirely on platform fullscreen restoration; `Workspace`, `WorkbenchStore`, and every start/resume/turn path shared one model preference.
+- Hypothesis: snapshot normal bounds around native fullscreen, add compact responsive breakpoints, and key model/effort values by Codex thread while using the app-server's thread settings protocol.
+- Disconfirming checks: fullscreen would still return fullscreen-sized bounds; the 720×520 renderer would overflow; two threads would show the same model; or installed app-server 0.147.0 would reject `thread/settings/update` or the new-thread reasoning override.
+- Root cause: confirmed. WSLg needed explicit post-`leave-full-screen` bounds restoration, and model ownership was implemented at the wrong persisted scope.
+
+**Changes**
+
+- Files changed: window behavior and responsive renderer styles; typed Codex session preference state and protocol serializers; main/preload/renderer/mock/store/shared contracts; focused tests; `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `WORKBENCH_PROGRESS.md`, and `CHANGELOG.md`.
+- Rationale: use native fullscreen while repairing the platform restoration gap, and use Codex's own thread model/settings semantics instead of inventing another global persistence layer.
+- User-visible effect: F11 enters fullscreen, Escape returns to the prior normal bounds, the UI remains usable down to 720×520, and the model toolbar explicitly says **This thread** or **New thread**. Switching Codex threads restores independent model/reasoning choices.
+- Security or compatibility considerations: renderer Node access and context isolation are unchanged. New model payloads cross only narrow typed methods and are bounded/control-character validated in the main process. Legacy workspace-global model fields are dropped during normal state sanitization; Codex supplies resumed threads' effective settings.
+
+**Verification**
+
+| Result | Exact command or manual check | Evidence / notes |
+|---|---|---|
+| passed | baseline `npm run check` after isolated `npm ci` | Both TypeScript projects and the original nine test files passed before edits; exit `0`. |
+| passed | `npm run build:tests && node --test dist-test/tests/codex-session.test.js dist-test/tests/codex-session-preferences.test.js dist-test/tests/codex-metadata.test.js dist-test/tests/store.test.js dist-test/tests/window-behavior.test.js` | Five focused files passed model-wire validation, thread isolation, legacy-global-state removal, and fullscreen restoration; exit `0`. |
+| passed | ephemeral installed app-server harness: `initialize`, `model/list`, `thread/start`, `thread/settings/update` | Codex CLI 0.147.0 accepted `gpt-5.6-sol` / `low` as thread-scoped settings; no turn was sent and the thread was ephemeral; exit `0`. |
+| passed | `npm run check` | Strict main/renderer type checks and all 12 compiled test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | No lint script exists in `package.json`. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | bounded production-renderer Electron journey at 720×520 | Body width remained 720 with no horizontal overflow; context tray compacted; `thr-refactor` retained Terra/medium while `thr-tests` retained Sol/high; fullscreen returned from 3832×2156 to the exact original 720×520 bounds; exit `0`. |
+| passed | `npm start -- --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The real app entry point stayed running under WSLg until intentional SIGINT. DBus/GPU warnings were non-fatal. |
+| passed | scoped `ps` checks for the task Electron path and `codex app-server` | No task Electron or Codex child remained after shutdown. |
+| passed | `git diff --check` | No whitespace errors. |
+
+**Closeout**
+
+- Final diff summary: P1-004 is isolated to the window/session implementation, focused regressions, current user/architecture documentation, and required task records; the temporary GUI harness was removed.
+- Remaining risks or unverified behavior: native Windows window controls were not manually exercised in this WSL session. Deterministic shortcut tests and the real WSLg fullscreen journey cover the defect; Windows CI remains required after publication. The app-server wire path and renderer isolation were verified separately rather than by sending a billable authenticated turn.
+- Task-board update: P1-004 marked `done`; both acceptance criteria have current evidence.
+- Changelog/docs update: recorded compact fullscreen restoration, per-thread model ownership, shortcuts, state boundaries, and migration behavior.
+- Next action: publish the feature branch, complete applicable CI and automated review, then continue with P0-004.
+- Blocker and smallest user action needed, if any: none established before the delivery attempt.
 
 ### 2026-08-30 00:23 JST — P2-003 required applicable CI independent of branch-protection settings
 

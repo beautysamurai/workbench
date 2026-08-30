@@ -3,6 +3,7 @@ import type {
   CodexConnectionStatus,
   CodexEventEnvelope,
   CodexModelInfo,
+  CodexModelPreference,
   CodexRateLimits,
   CodexServerRequestEnvelope,
   CodexThreadSummary,
@@ -26,11 +27,13 @@ import {
   shouldShowCodexNotificationInTranscript,
 } from './codex-transcript.js';
 import {
+  changeCodexModelPreference,
   chooseCodexModelPreference,
   primaryRateLimit,
   rateLimitsFromNotification,
   remainingUsagePercent,
 } from './codex-metadata.js';
+import { CodexSessionPreferences } from './codex-session-preferences.js';
 import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
 import { TerminalBuffer } from './terminal-buffer.js';
@@ -100,6 +103,7 @@ interface UiState {
   codexModels: Map<string, CodexModelInfo[]>;
   codexMetadataLoading: Set<string>;
   codexMetadataErrors: Map<string, string>;
+  codexPreferences: CodexSessionPreferences;
   rateLimits: Map<string, CodexRateLimits>;
   projectSystems: Map<string, ProjectSystemStatus>;
   projectLoading: Set<string>;
@@ -140,6 +144,7 @@ const ui: UiState = {
   codexModels: new Map(),
   codexMetadataLoading: new Set(),
   codexMetadataErrors: new Map(),
+  codexPreferences: new CodexSessionPreferences(),
   rateLimits: new Map(),
   projectSystems: new Map(),
   projectLoading: new Set(),
@@ -638,7 +643,7 @@ function renderCodexLanding(workspace: Workspace, status?: CodexConnectionStatus
   const connecting = status?.state === 'connecting' || ui.busyActions.has('codex-connect');
   return `
     <div class="codex-landing">
-      ${renderCodexControls(workspace)}
+      ${renderCodexControls(workspace, null)}
       <div class="empty-state">
         <div class="empty-state-card">
           <div class="empty-state-icon">${icon('sparkle', 31)}</div>
@@ -650,9 +655,16 @@ function renderCodexLanding(workspace: Workspace, status?: CodexConnectionStatus
     </div>`;
 }
 
-function renderCodexControls(workspace: Workspace): string {
+function sessionModelPreference(workspace: Workspace, threadId: string | null): CodexModelPreference {
+  return chooseCodexModelPreference(
+    ui.codexModels.get(workspace.distro) ?? [],
+    ui.codexPreferences.get(workspace.id, threadId),
+  );
+}
+
+function renderCodexControls(workspace: Workspace, threadId: string | null): string {
   const models = ui.codexModels.get(workspace.distro) ?? [];
-  const preference = chooseCodexModelPreference(models, workspace);
+  const preference = sessionModelPreference(workspace, threadId);
   const selected = models.find((model) => model.model === preference.model);
   const efforts = selected?.supportedReasoningEfforts ?? [];
   const loading = ui.codexMetadataLoading.has(workspace.distro);
@@ -665,8 +677,9 @@ function renderCodexControls(workspace: Workspace): string {
 
   return `
     <div class="codex-config-bar">
-      <label class="codex-selector"><span>Model</span><select data-codex-setting="model" aria-label="Codex model" ${!models.length || loading ? 'disabled' : ''}>${modelOptions || '<option>Unavailable</option>'}</select></label>
-      <label class="codex-selector"><span>Reasoning</span><select data-codex-setting="effort" aria-label="Reasoning effort" ${!efforts.length || loading ? 'disabled' : ''}>${effortOptions || '<option>Default</option>'}</select></label>
+      <span class="codex-config-scope">${threadId ? 'This thread' : 'New thread'}</span>
+      <label class="codex-selector"><span>Model</span><select data-codex-setting="model" aria-label="Codex session model" ${!models.length || loading ? 'disabled' : ''}>${modelOptions || '<option>Unavailable</option>'}</select></label>
+      <label class="codex-selector"><span>Reasoning</span><select data-codex-setting="effort" aria-label="Codex session reasoning effort" ${!efforts.length || loading ? 'disabled' : ''}>${effortOptions || '<option>Default</option>'}</select></label>
       <div class="codex-usage" title="Codex primary usage window">${icon('chart', 13)}<span><strong>${escapeHtml(usage)}</strong>${reset ? `<small>Resets ${escapeHtml(formatResetTime(reset))}</small>` : ''}</span></div>
       ${error ? `<span class="codex-metadata-error" title="${escapeHtml(error)}">${icon('alert', 12)} Metadata unavailable</span>` : ''}
       <button class="icon-button" data-action="refresh-codex-metadata" title="Refresh models and usage" ${loading ? 'disabled' : ''}>${icon('refresh', 13)}</button>
@@ -710,7 +723,7 @@ function renderConversation(
         <button class="icon-button" data-action="archive-thread" title="Archive thread">${icon('archive', 14)}</button>
       </div>
     </div>
-    ${renderCodexControls(workspace)}
+    ${renderCodexControls(workspace, threadId)}
     <div class="message-scroll" id="message-scroll">
       <div class="message-list">
         ${entries || `<div class="empty-inline">Ask Codex to inspect, implement, test, explain, or review something in this workspace.</div>`}
@@ -1075,18 +1088,7 @@ async function refreshGit(workspace: Workspace): Promise<void> {
 
 async function ensureCodexMetadata(workspace: Workspace, force = false): Promise<void> {
   if (ui.codexMetadataLoading.has(workspace.distro)) return;
-  if (!force && ui.codexModels.has(workspace.distro) && ui.rateLimits.has(workspace.distro)) {
-    const preference = chooseCodexModelPreference(ui.codexModels.get(workspace.distro) ?? [], workspace);
-    if (preference.model !== workspace.codexModel || preference.effort !== workspace.codexEffort) {
-      try {
-        ui.data = await api.state.saveCodexPreferences(workspace.id, preference.model, preference.effort);
-        renderAll({ preserveFocus: true });
-      } catch (error) {
-        ui.codexMetadataErrors.set(workspace.distro, errorMessage(error));
-      }
-    }
-    return;
-  }
+  if (!force && ui.codexModels.has(workspace.distro) && ui.rateLimits.has(workspace.distro)) return;
   ui.codexMetadataLoading.add(workspace.distro);
   ui.codexMetadataErrors.delete(workspace.distro);
   renderAll({ preserveFocus: true });
@@ -1100,10 +1102,6 @@ async function ensureCodexMetadata(workspace: Workspace, force = false): Promise
     if (modelsResult.status === 'fulfilled') {
       const models = modelsResult.value.data.filter((model) => !model.hidden);
       ui.codexModels.set(workspace.distro, models);
-      const preference = chooseCodexModelPreference(models, workspace);
-      if (preference.model !== workspace.codexModel || preference.effort !== workspace.codexEffort) {
-        ui.data = await api.state.saveCodexPreferences(workspace.id, preference.model, preference.effort);
-      }
     } else {
       failures.push(errorMessage(modelsResult.reason));
     }
@@ -1171,15 +1169,17 @@ async function submitProjectTask(): Promise<void> {
 
 async function saveCodexSetting(workspace: Workspace, setting: 'model' | 'effort', value: string): Promise<void> {
   const models = ui.codexModels.get(workspace.distro) ?? [];
-  const model = setting === 'model' ? value : workspace.codexModel;
-  const selected = models.find((candidate) => candidate.model === model);
-  const effort = setting === 'model'
-    ? selected?.defaultReasoningEffort ?? selected?.supportedReasoningEfforts[0]?.reasoningEffort ?? null
-    : value;
+  const threadId = ui.activeThread.get(workspace.id) ?? null;
+  const previous = sessionModelPreference(workspace, threadId);
+  const preference = changeCodexModelPreference(models, previous, setting, value);
+  ui.codexPreferences.set(workspace.id, threadId, preference);
+  renderAll({ preserveFocus: true });
+  if (!threadId) return;
   try {
-    ui.data = await api.state.saveCodexPreferences(workspace.id, model || null, effort || null);
-    renderAll({ preserveFocus: true });
+    await api.codex.updateThreadSettings(workspace.id, threadId, preference);
   } catch (error) {
+    ui.codexPreferences.set(workspace.id, threadId, previous);
+    renderAll({ preserveFocus: true });
     toast(errorMessage(error), 'error');
   }
 }
@@ -1224,7 +1224,8 @@ async function loadThread(workspace: Workspace, threadId: string, shouldRender =
   ui.activeThread.set(workspace.id, threadId);
   if (shouldRender) renderMainArea(true);
   try {
-    await api.codex.resumeThread(workspace.id, threadId);
+    const resumeResponse = await api.codex.resumeThread(workspace.id, threadId);
+    rememberThreadModelPreference(workspace, threadId, resumeResponse);
     const response = await api.codex.readThread(workspace.id, threadId);
     hydrateThreadView(view, response);
   } catch (error) {
@@ -1232,6 +1233,20 @@ async function loadThread(workspace: Workspace, threadId: string, shouldRender =
   }
   view.loaded = true;
   if (shouldRender) renderMainArea(true, true);
+}
+
+function rememberThreadModelPreference(
+  workspace: Workspace,
+  threadId: string,
+  response: Record<string, unknown>,
+  fallback?: CodexModelPreference,
+): void {
+  const model = stringValue(response.model, fallback?.model ?? '');
+  const effort = stringValue(response.reasoningEffort, stringValue(response.effort, fallback?.effort ?? ''));
+  ui.codexPreferences.set(workspace.id, threadId, {
+    model: model || null,
+    effort: effort || null,
+  });
 }
 
 function hydrateThreadView(view: ThreadViewState, response: Record<string, unknown>): void {
@@ -1355,6 +1370,25 @@ function handleCodexEvent(event: CodexEventEnvelope): void {
     renderAll({ preserveFocus: true });
     return;
   }
+  if (method === 'thread/settings/updated') {
+    const threadId = stringValue(event.params.threadId);
+    const settings = asRecord(event.params.threadSettings);
+    const knownWorkspaceId = ui.codexPreferences.workspaceIdForThread(threadId);
+    const workspace = (ui.data?.workspaces ?? []).find((candidate) =>
+      candidate.distro === event.distro
+      && (knownWorkspaceId
+        ? candidate.id === knownWorkspaceId
+        : ui.activeThread.get(candidate.id) === threadId
+          || (ui.threadLists.get(candidate.id) ?? []).some((thread) => thread.id === threadId)));
+    if (threadId && workspace) {
+      rememberThreadModelPreference(workspace, threadId, {
+        model: settings.model,
+        effort: settings.effort,
+      });
+    }
+    renderAll({ preserveFocus: true });
+    return;
+  }
   if (!shouldShowCodexNotificationInTranscript(method)) return;
   const threadId = findThreadId(event);
 
@@ -1380,6 +1414,7 @@ function handleCodexEvent(event: CodexEventEnvelope): void {
       ui.threadLists.set(workspaceId, list.filter((thread) => thread.id !== archivedId));
       if (ui.activeThread.get(workspaceId) === archivedId) ui.activeThread.delete(workspaceId);
     }
+    ui.codexPreferences.deleteThread(archivedId);
     renderAll({ preserveFocus: true });
     return;
   }
@@ -1968,8 +2003,6 @@ async function submitWorkspaceForm(): Promise<void> {
     root: String(data.get('root') ?? ''),
     commands: parseCommands(String(data.get('commands') ?? ''), existing?.commands),
     contextItems: existing?.contextItems ?? [],
-    codexModel: existing?.codexModel ?? null,
-    codexEffort: existing?.codexEffort ?? null,
   };
   const initializeProject = !existing && data.get('initializeProject') === 'on';
   const result = await withBusy('save-workspace', () => api.state.saveWorkspace(draft));
@@ -2002,8 +2035,12 @@ async function deleteWorkspace(workspaceId: string): Promise<void> {
     ui.data = await api.state.deleteWorkspace(workspaceId);
     ui.git.delete(workspaceId);
     ui.projectSystems.delete(workspaceId);
+    for (const thread of ui.threadLists.get(workspaceId) ?? []) {
+      ui.codexPreferences.deleteThread(thread.id);
+    }
     ui.threadLists.delete(workspaceId);
     ui.activeThread.delete(workspaceId);
+    ui.codexPreferences.deleteWorkspace(workspaceId);
     for (const [handle, terminal] of ui.terminals) {
       if (terminal.workspaceId === workspaceId) ui.terminals.delete(handle);
     }
@@ -2065,9 +2102,10 @@ async function submitContextForm(): Promise<void> {
 }
 
 async function startNewThread(workspace: Workspace): Promise<void> {
+  const preference = sessionModelPreference(workspace, null);
   const result = await withBusy('new-thread', async () => {
     await api.codex.connect(workspace.id);
-    return api.codex.startThread(workspace.id);
+    return api.codex.startThread(workspace.id, preference);
   });
   if (!result) return;
   const thread = asRecord(result.thread ?? result);
@@ -2080,6 +2118,7 @@ async function startNewThread(workspace: Workspace): Promise<void> {
   const list = ui.threadLists.get(workspace.id) ?? [];
   ui.threadLists.set(workspace.id, [summary, ...list.filter((candidate) => candidate.id !== threadId)]);
   ui.activeThread.set(workspace.id, threadId);
+  rememberThreadModelPreference(workspace, threadId, result, preference);
   threadView(threadId).loaded = true;
   ui.activeTab = 'codex';
   renderAll();
@@ -2098,7 +2137,8 @@ async function sendCodexTurn(): Promise<void> {
   view.entries.push(userEntry);
   view.turnStatus = 'inProgress';
   renderMainArea(false, true);
-  const result = await withBusy('codex-turn', () => api.codex.startTurn(workspace.id, threadId, text));
+  const preference = sessionModelPreference(workspace, threadId);
+  const result = await withBusy('codex-turn', () => api.codex.startTurn(workspace.id, threadId, text, preference));
   if (!result) {
     view.turnStatus = 'failed';
     view.entries.push({ id: `local-error-${Date.now()}`, type: 'system', text: 'The Codex turn could not be started.' });
