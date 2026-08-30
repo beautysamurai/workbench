@@ -4,6 +4,7 @@ import {
   configureWslgDisplayScale,
   detectWslgDisplayScale,
   parseWslgPrimaryDisplayScale,
+  watchWslgDisplayScaleChanges,
 } from '../src/main/wslg-display-scale';
 
 const homogeneousScaleLayout = `
@@ -22,6 +23,16 @@ const homogeneousScaleLayout = `
 [10:00:00.001] rdpMonitor[1]: desktopScaleFactor:0, deviceScaleFactor:140
 `;
 
+const mixedScaleLayout = homogeneousScaleLayout.replace(
+  'rdpMonitor[0]: desktopScaleFactor:150',
+  'rdpMonitor[0]: desktopScaleFactor:100',
+);
+
+const wslgOptions = {
+  env: { WSL_INTEROP: '/run/WSL/1_interop', WAYLAND_DISPLAY: 'wayland-0' },
+  platform: 'linux' as NodeJS.Platform,
+};
+
 test('parses the primary Windows desktop scale from the latest WSLg layout input', () => {
   const staleLayout = homogeneousScaleLayout.replaceAll('150', '200');
   assert.equal(parseWslgPrimaryDisplayScale(`${staleLayout}\n${homogeneousScaleLayout}`), 1.5);
@@ -37,10 +48,6 @@ test('parses the primary Windows desktop scale from the latest WSLg layout input
 });
 
 test('does not force a process-wide scale for a mixed-scale monitor layout', () => {
-  const mixedScaleLayout = homogeneousScaleLayout.replace(
-    'rdpMonitor[0]: desktopScaleFactor:150',
-    'rdpMonitor[0]: desktopScaleFactor:100',
-  );
   assert.equal(parseWslgPrimaryDisplayScale(mixedScaleLayout), null);
 });
 
@@ -58,8 +65,7 @@ test('rejects incomplete or count-mismatched WSLg layout records', () => {
 
 test('detects scale only for a WSLg Linux process and tolerates an unavailable log', () => {
   const wslg = {
-    env: { WSL_INTEROP: '/run/WSL/1_interop', WAYLAND_DISPLAY: 'wayland-0' },
-    platform: 'linux' as NodeJS.Platform,
+    ...wslgOptions,
     readLog: () => homogeneousScaleLayout,
   };
   assert.equal(detectWslgDisplayScale(wslg), 1.5);
@@ -74,8 +80,7 @@ test('configures Chromium scale without overriding an explicit user switch', () 
     hasSwitch: () => false,
   };
   const options = {
-    env: { WSL_INTEROP: '/run/WSL/1_interop', WAYLAND_DISPLAY: 'wayland-0' },
-    platform: 'linux' as NodeJS.Platform,
+    ...wslgOptions,
     readLog: () => homogeneousScaleLayout,
   };
 
@@ -83,13 +88,91 @@ test('configures Chromium scale without overriding an explicit user switch', () 
   assert.deepEqual(appended, [['force-device-scale-factor', '1.5']]);
 
   appended.length = 0;
-  const mixedScaleLayout = homogeneousScaleLayout.replace(
-    'rdpMonitor[0]: desktopScaleFactor:150',
-    'rdpMonitor[0]: desktopScaleFactor:100',
-  );
   assert.equal(configureWslgDisplayScale(commandLine, { ...options, readLog: () => mixedScaleLayout }), null);
   assert.deepEqual(appended, []);
 
   assert.equal(configureWslgDisplayScale({ ...commandLine, hasSwitch: () => true }, options), null);
   assert.deepEqual(appended, []);
+});
+
+test('requests one clean relaunch when the effective WSLg scale changes', async () => {
+  let listener: () => void = () => { assert.fail('display change listener was not registered'); };
+  let layout = homogeneousScaleLayout;
+  let relaunches = 0;
+  let unsubscribes = 0;
+  const dispose = watchWslgDisplayScaleChanges(
+    (nextListener) => {
+      listener = nextListener;
+      return () => { unsubscribes += 1; };
+    },
+    1.5,
+    () => { relaunches += 1; },
+    {
+      ...wslgOptions,
+      debounceMs: 0,
+      readLog: () => layout,
+    },
+  );
+
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(relaunches, 0);
+
+  layout = mixedScaleLayout;
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(relaunches, 1);
+  assert.equal(unsubscribes, 1);
+
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(relaunches, 1);
+  dispose();
+  assert.equal(unsubscribes, 1);
+});
+
+test('waits out a partial WSLg layout before deciding the scale changed', async () => {
+  let listener: () => void = () => { assert.fail('display change listener was not registered'); };
+  let reads = 0;
+  let relaunches = 0;
+  const dispose = watchWslgDisplayScaleChanges(
+    (nextListener) => {
+      listener = nextListener;
+      return () => {};
+    },
+    1.5,
+    () => { relaunches += 1; },
+    {
+      ...wslgOptions,
+      debounceMs: 0,
+      readLog: () => {
+        reads += 1;
+        return reads === 1
+          ? '[10:00:00.000] Client: DisplayLayoutChange: monitor count:0x1'
+          : homogeneousScaleLayout;
+      },
+    },
+  );
+
+  listener();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(reads, 2);
+  assert.equal(relaunches, 0);
+  dispose();
+});
+
+test('does not subscribe to display changes outside WSLg', () => {
+  let subscriptions = 0;
+  const dispose = watchWslgDisplayScaleChanges(
+    () => {
+      subscriptions += 1;
+      return () => {};
+    },
+    null,
+    () => assert.fail('unexpected scale change'),
+    { ...wslgOptions, platform: 'win32' },
+  );
+
+  assert.equal(subscriptions, 0);
+  dispose();
 });

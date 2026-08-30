@@ -2,7 +2,9 @@ import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
 const WSLG_LOG_PATH = '/mnt/wslg/weston.log';
 const MAX_LOG_BYTES = 512 * 1024;
-const DEVICE_SCALE_SWITCH = 'force-device-scale-factor';
+const DEFAULT_SCALE_CHANGE_DEBOUNCE_MS = 500;
+
+export const DEVICE_SCALE_FACTOR_SWITCH = 'force-device-scale-factor';
 
 interface ChromiumCommandLine {
   appendSwitch(name: string, value?: string): void;
@@ -13,6 +15,21 @@ interface WslgScaleDetectionOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   readLog?: () => string;
+}
+
+interface WslgScaleWatchOptions extends WslgScaleDetectionOptions {
+  debounceMs?: number;
+}
+
+type SubscribeToDisplayChanges = (listener: () => void) => () => void;
+
+function isWslgEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): boolean {
+  return platform === 'linux'
+    && Boolean(env.WSL_INTEROP)
+    && Boolean(env.WAYLAND_DISPLAY);
 }
 
 function readLogTail(path = WSLG_LOG_PATH): string {
@@ -99,10 +116,7 @@ export function detectWslgDisplayScale({
   platform = process.platform,
   readLog = readLogTail,
 }: WslgScaleDetectionOptions = {}): number | null {
-  const isWslg = platform === 'linux'
-    && Boolean(env.WSL_INTEROP)
-    && Boolean(env.WAYLAND_DISPLAY);
-  if (!isWslg) return null;
+  if (!isWslgEnvironment(env, platform)) return null;
 
   try {
     return parseWslgPrimaryDisplayScale(readLog());
@@ -115,12 +129,76 @@ export function configureWslgDisplayScale(
   commandLine: ChromiumCommandLine,
   options: WslgScaleDetectionOptions = {},
 ): number | null {
-  if (commandLine.hasSwitch(DEVICE_SCALE_SWITCH)) return null;
+  if (commandLine.hasSwitch(DEVICE_SCALE_FACTOR_SWITCH)) return null;
 
   // WSLg can leave fractional Windows scaling unapplied to its Chromium client.
   // Align Chromium before `ready` so fullscreen geometry and pointer input agree.
   const scale = detectWslgDisplayScale(options);
   if (scale === null || scale === 1) return null;
-  commandLine.appendSwitch(DEVICE_SCALE_SWITCH, String(scale));
+  commandLine.appendSwitch(DEVICE_SCALE_FACTOR_SWITCH, String(scale));
   return scale;
+}
+
+export function watchWslgDisplayScaleChanges(
+  subscribe: SubscribeToDisplayChanges,
+  initialScale: number | null,
+  onScaleChanged: () => void,
+  {
+    env = process.env,
+    platform = process.platform,
+    debounceMs = DEFAULT_SCALE_CHANGE_DEBOUNCE_MS,
+    ...detectionOptions
+  }: WslgScaleWatchOptions = {},
+): () => void {
+  if (!isWslgEnvironment(env, platform)) return () => {};
+
+  const effectiveInitialScale = initialScale ?? 1;
+  let candidateScale: number | undefined;
+  let timer: NodeJS.Timeout | null = null;
+  let stopped = false;
+  let unsubscribe = () => {};
+
+  const dispose = (): void => {
+    if (stopped) return;
+    stopped = true;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    unsubscribe();
+  };
+
+  const inspectScale = (): void => {
+    timer = null;
+    if (stopped) return;
+
+    const detectedScale = detectWslgDisplayScale({
+      ...detectionOptions,
+      env,
+      platform,
+    }) ?? 1;
+    if (detectedScale === effectiveInitialScale) {
+      candidateScale = undefined;
+      return;
+    }
+
+    // Confirm the new value twice. Weston writes layouts incrementally, so a
+    // single null result can be a transient partial record rather than scale 1.
+    if (candidateScale !== detectedScale) {
+      candidateScale = detectedScale;
+      timer = setTimeout(inspectScale, debounceMs);
+      return;
+    }
+
+    dispose();
+    onScaleChanged();
+  };
+
+  const handleDisplayChange = (): void => {
+    if (stopped) return;
+    candidateScale = undefined;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(inspectScale, debounceMs);
+  };
+
+  unsubscribe = subscribe(handleDisplayChange);
+  return dispose;
 }

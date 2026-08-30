@@ -18,7 +18,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 
 ### Fixed
 
-- Fixed fullscreen on consistently scaled WSLg displays so the window reaches the screen edges under fractional Windows scaling, pointer hit targets stay aligned, and the prior small-window bounds restore; mixed-scale layouts retain Electron defaults, and the responsive layout remains usable down to 720×520.
+- Fixed fullscreen on consistently scaled WSLg displays so the window reaches the screen edges under fractional Windows scaling, pointer hit targets stay aligned, and the prior small-window bounds restore; mixed-scale layouts retain Electron defaults, runtime scale changes trigger a clean recalibration, and the responsive layout remains usable down to 720×520.
 - Preserved a resumed thread's effective model when it is hidden or temporarily absent from the visible model catalog.
 - Fixed Codex thread creation, resume, and turn startup by sending approval and thread-sandbox settings in the app-server's required wire format.
 - Removed internal Codex reasoning-status rows from conversation logs while keeping user-facing progress and results visible.

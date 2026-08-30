@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, screen, shell } from 'electron';
 import { CodexAppServerManager } from './codex-app-server';
 import { registerIpc } from './ipc';
 import { WorkbenchStore } from './store';
@@ -9,12 +9,18 @@ import {
   WORKBENCH_MIN_WINDOW_HEIGHT,
   WORKBENCH_MIN_WINDOW_WIDTH,
 } from './window-behavior';
-import { configureWslgDisplayScale } from './wslg-display-scale';
+import {
+  configureWslgDisplayScale,
+  DEVICE_SCALE_FACTOR_SWITCH,
+  watchWslgDisplayScaleChanges,
+} from './wslg-display-scale';
 
-configureWslgDisplayScale(app.commandLine);
+const hasExplicitDeviceScale = app.commandLine.hasSwitch(DEVICE_SCALE_FACTOR_SWITCH);
+const configuredWslgDisplayScale = configureWslgDisplayScale(app.commandLine);
 
 let mainWindow: BrowserWindow | null = null;
 let disposeIpc: (() => void) | null = null;
+let disposeWslgScaleWatch: (() => void) | null = null;
 let codex: CodexAppServerManager | null = null;
 let terminals: TerminalManager | null = null;
 
@@ -68,6 +74,26 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  if (!hasExplicitDeviceScale) {
+    disposeWslgScaleWatch = watchWslgDisplayScaleChanges(
+      (listener) => {
+        screen.on('display-added', listener);
+        screen.on('display-removed', listener);
+        screen.on('display-metrics-changed', listener);
+        return () => {
+          screen.off('display-added', listener);
+          screen.off('display-removed', listener);
+          screen.off('display-metrics-changed', listener);
+        };
+      },
+      configuredWslgDisplayScale,
+      () => {
+        app.relaunch();
+        app.quit();
+      },
+    );
+  }
+
   Menu.setApplicationMenu(null);
   mainWindow = createWindow();
   const store = new WorkbenchStore(path.join(app.getPath('userData'), 'workbench-state.json'));
@@ -85,6 +111,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  disposeWslgScaleWatch?.();
   disposeIpc?.();
   terminals?.closeAll();
   codex?.stopAll();
