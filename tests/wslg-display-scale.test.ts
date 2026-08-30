@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
   configureWslgDisplayScale,
@@ -92,6 +95,21 @@ test('detects scale only for a WSLg Linux process and tolerates an unavailable l
   assert.equal(detectWslgDisplayScale(wslg), 1.5);
   assert.equal(detectWslgDisplayScale({ ...wslg, platform: 'win32' }), null);
   assert.equal(detectWslgDisplayScale({ ...wslg, readLog: () => { throw new Error('missing'); } }), null);
+});
+
+test('finds the latest WSLg layout beyond a fixed-size log tail', (context) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'workbench-wslg-scale-'));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const logPath = path.join(directory, 'weston.log');
+  const chunkBytes = 512 * 1024;
+  const layout = Buffer.from(homogeneousScaleLayout.trimStart());
+  writeFileSync(logPath, Buffer.concat([
+    Buffer.alloc(chunkBytes - 10, 0x78),
+    layout,
+    Buffer.alloc(chunkBytes + 10 - layout.length, 0x78),
+  ]));
+
+  assert.equal(detectWslgDisplayScale({ ...wslgOptions, logPath }), 1.5);
 });
 
 test('configures Chromium scale without overriding an explicit user switch', () => {

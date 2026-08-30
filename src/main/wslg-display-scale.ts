@@ -1,7 +1,9 @@
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
 const WSLG_LOG_PATH = '/mnt/wslg/weston.log';
-const MAX_LOG_BYTES = 512 * 1024;
+const WSLG_LAYOUT_MARKER = 'Client: DisplayLayoutChange';
+const LOG_SCAN_CHUNK_BYTES = 512 * 1024;
+const MAX_LAYOUT_BYTES = 512 * 1024;
 const DEFAULT_SCALE_CHANGE_DEBOUNCE_MS = 500;
 const SCALE_CHANGE_SETTLE_READS = 5;
 
@@ -14,6 +16,7 @@ interface ChromiumCommandLine {
 
 interface WslgScaleDetectionOptions {
   env?: NodeJS.ProcessEnv;
+  logPath?: string;
   platform?: NodeJS.Platform;
   readLog?: () => string;
 }
@@ -48,33 +51,55 @@ function isWslgEnvironment(
     && Boolean(env.WAYLAND_DISPLAY);
 }
 
-function readLogTail(path = WSLG_LOG_PATH): string {
+function readRange(descriptor: number, position: number, length: number): Buffer {
+  const buffer = Buffer.allocUnsafe(length);
+  let bytesRead = 0;
+  while (bytesRead < length) {
+    const count = readSync(
+      descriptor,
+      buffer,
+      bytesRead,
+      length - bytesRead,
+      position + bytesRead,
+    );
+    if (count === 0) throw new Error('WSLg log changed while it was being read.');
+    bytesRead += count;
+  }
+  return buffer;
+}
+
+function readLatestWslgLayout(path = WSLG_LOG_PATH): string {
   const descriptor = openSync(path, 'r');
   try {
     const size = fstatSync(descriptor).size;
-    const length = Math.min(size, MAX_LOG_BYTES);
-    const buffer = Buffer.alloc(length);
-    let bytesRead = 0;
-    while (bytesRead < length) {
-      const count = readSync(
-        descriptor,
-        buffer,
-        bytesRead,
-        length - bytesRead,
-        size - length + bytesRead,
-      );
-      if (count === 0) break;
-      bytesRead += count;
+    const marker = Buffer.from(WSLG_LAYOUT_MARKER);
+    let searchEnd = size;
+    let followingPrefix = Buffer.alloc(0);
+
+    while (searchEnd > 0) {
+      const searchStart = Math.max(0, searchEnd - LOG_SCAN_CHUNK_BYTES);
+      const chunk = readRange(descriptor, searchStart, searchEnd - searchStart);
+      const searchable = followingPrefix.length > 0
+        ? Buffer.concat([chunk, followingPrefix])
+        : chunk;
+      const markerIndex = searchable.lastIndexOf(marker);
+      if (markerIndex >= 0 && markerIndex < chunk.length) {
+        const markerPosition = searchStart + markerIndex;
+        const layoutLength = Math.min(size - markerPosition, MAX_LAYOUT_BYTES);
+        return readRange(descriptor, markerPosition, layoutLength).toString('utf8');
+      }
+
+      followingPrefix = chunk.subarray(0, Math.min(marker.length - 1, chunk.length));
+      searchEnd = searchStart;
     }
-    return buffer.subarray(0, bytesRead).toString('utf8');
+    return '';
   } finally {
     closeSync(descriptor);
   }
 }
 
 function parseWslgLayoutScale(log: string): WslgLayoutScale {
-  const layoutMarker = 'Client: DisplayLayoutChange';
-  const latestLayoutStart = log.lastIndexOf(layoutMarker);
+  const latestLayoutStart = log.lastIndexOf(WSLG_LAYOUT_MARKER);
   if (latestLayoutStart < 0) return INDETERMINATE_LAYOUT;
   const latestLayout = log.slice(latestLayoutStart);
   const declaredCountMatch = latestLayout.match(
@@ -136,13 +161,14 @@ export function parseWslgPrimaryDisplayScale(log: string): number | null {
 
 function detectWslgLayoutScale({
   env = process.env,
+  logPath = WSLG_LOG_PATH,
   platform = process.platform,
-  readLog = readLogTail,
+  readLog,
 }: WslgScaleDetectionOptions = {}): WslgLayoutScale {
   if (!isWslgEnvironment(env, platform)) return INDETERMINATE_LAYOUT;
 
   try {
-    return parseWslgLayoutScale(readLog());
+    return parseWslgLayoutScale(readLog ? readLog() : readLatestWslgLayout(logPath));
   } catch {
     return INDETERMINATE_LAYOUT;
   }

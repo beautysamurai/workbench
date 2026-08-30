@@ -945,3 +945,24 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and publish both accepted corrections, resolve both review threads with evidence, then complete fresh CI and exact-head automated re-review.
 - Blocker: none established.
+
+### 2026-08-30 16:40 JST — P1-004 accepted long-running Weston log review finding
+
+**Final-head review evidence**
+
+- Commit `7ecc59f` passed both Linux verification jobs in 15–16 seconds and both Windows packaging jobs in 1 minute 44 seconds and 1 minute 50 seconds.
+- Automated Codex review `5060240378` completed on exact head `7ecc59f` and opened one P2 thread (`discussion_r3888776693`): if more than 512 KiB of unrelated Weston output followed the latest layout marker, the fixed tail omitted that marker and scale detection remained indeterminate.
+- Disposition: accepted. WSLg can be long-running independently of Workbench, so startup correctness cannot rely on the latest layout happening to remain inside one fixed tail.
+
+**Scoped correction and verification**
+
+- The Weston reader now scans backward from a snapshot size in fixed 512 KiB chunks with marker-length overlap, stopping at the latest `DisplayLayoutChange` marker. It then reads at most 512 KiB forward from that marker for parsing, bounding memory and layout payload while allowing the marker to be arbitrarily far from the end of the log.
+- A short read caused by concurrent truncation becomes an indeterminate detection and is retried by the existing settling loop; the descriptor remains protected by `finally` cleanup. Detection options accept a task-internal log path so the real reader can be exercised portably without touching the host Weston file.
+- The focused regression creates a 1 MiB temporary log whose latest marker crosses the old 512 KiB tail boundary, verifies scale `1.5`, and removes the temporary directory after the test.
+- `npm run build:tests && node --test dist-test/tests/wslg-display-scale.test.js`, `npm run check:portable`, `npm run check`, `npm run build`, and `git diff --check` all passed; portable ran 12 files and full verification ran 13 files including WSL integration.
+- `node -e 'const {detectWslgDisplayScale}=require("./dist/main/main/wslg-display-scale.js"); console.log(detectWslgDisplayScale())'` printed `1.5` against the current real `/mnt/wslg/weston.log` after the reader change.
+
+**Next action**
+
+- Commit and publish the backward-scan fix, resolve the finding with evidence, then complete fresh CI and exact-head automated re-review.
+- Blocker: none established.
