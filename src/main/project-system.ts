@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { Worker } from 'node:worker_threads';
+import { inflateSync } from 'node:zlib';
 import type {
   ProjectSystemFile,
   ProjectSystemStatus,
@@ -9,7 +12,6 @@ import type {
   ProjectTaskState,
   Workspace,
 } from '../shared/types';
-import { inflateSync } from 'node:zlib';
 import { shellQuote } from './path-utils';
 import { hasCompleteVp8lBitstream } from './vp8l-validator';
 import { runWslCommand } from './wsl';
@@ -21,8 +23,14 @@ const PROJECT_IMAGE_DIRECTORY = '.workbench/task-images';
 const MAX_TASK_IMAGES = 4;
 const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 40_000_000;
 const MAX_PNG_INFLATED_BYTES = 160 * 1024 * 1024;
+const MAX_WEBP_IMAGE_CHUNKS = 128;
+const MAX_PENDING_PROJECT_IMAGE_DECODES = 8;
+const PROJECT_IMAGE_DECODE_TIMEOUT_MS = 15_000;
 const projectTaskMutationQueues = new Map<string, Promise<ProjectSystemStatus>>();
+let pendingProjectImageDecodes = 0;
+let projectImageDecodeQueue: Promise<void> = Promise.resolve();
 
 const PROJECT_TEMPLATES: Record<(typeof PROJECT_FILES)[number], string> = {
   'AGENTS.md': `# Project agent guide
@@ -235,7 +243,7 @@ function uint24LittleEndian(bytes: Uint8Array, offset: number): number {
 }
 
 function validImageDimensions(width: number, height: number): boolean {
-  return width > 0 && height > 0 && width <= 16_384 && height <= 16_384 && width * height <= 40_000_000;
+  return width > 0 && height > 0 && width <= 16_384 && height <= 16_384 && width * height <= MAX_IMAGE_PIXELS;
 }
 
 const PNG_CRC_TABLE = Uint32Array.from({ length: 256 }, (_unused, index) => {
@@ -517,8 +525,110 @@ function isStructuredJpeg(bytes: Uint8Array): boolean {
   return false;
 }
 
-function isStructuredVp8Payload(bytes: Uint8Array, start: number, length: number): boolean {
-  if (length <= 10 || !startsWithBytes(bytes, [0x9d, 0x01, 0x2a], start + 3)) return false;
+interface DecodedImageMetadata {
+  width: number;
+  height: number;
+}
+
+interface ProjectImageDecoderMessage {
+  images: DecodedImageMetadata[];
+}
+
+function isDecodedImageMetadata(value: unknown): value is DecodedImageMetadata {
+  const candidate = value as Partial<DecodedImageMetadata>;
+  return !!candidate
+    && Number.isSafeInteger(candidate.width)
+    && Number.isSafeInteger(candidate.height)
+    && validImageDimensions(candidate.width ?? 0, candidate.height ?? 0);
+}
+
+async function decodeProjectImagesNow(
+  kind: 'jpeg' | 'webp',
+  images: Uint8Array[],
+): Promise<DecodedImageMetadata[] | null> {
+  if (!images.length || images.length > MAX_WEBP_IMAGE_CHUNKS) {
+    throw new Error('Task image decoding could not start.');
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const worker = new Worker(path.join(__dirname, 'project-image-decoder-worker.js'), {
+        resourceLimits: {
+          maxOldGenerationSizeMb: 256,
+          maxYoungGenerationSizeMb: 32,
+          stackSizeMb: 4,
+        },
+        workerData: {
+          kind,
+          images: images.map((image) => Uint8Array.from(image)),
+        },
+      });
+      const finish = (result: DecodedImageMetadata[] | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const fail = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error('Task image decoding did not complete.'));
+      };
+      const timer = setTimeout(() => {
+        void worker.terminate().finally(fail);
+      }, PROJECT_IMAGE_DECODE_TIMEOUT_MS);
+      worker.once('message', (value: unknown) => {
+        const message = value as Partial<ProjectImageDecoderMessage>;
+        if (!Array.isArray(message?.images)) {
+          fail();
+        } else if (message.images.length === 0) {
+          finish(null);
+        } else if (message.images.length === images.length
+          && message.images.every(isDecodedImageMetadata)) {
+          finish(message.images);
+        } else {
+          fail();
+        }
+      });
+      worker.once('error', fail);
+      worker.once('exit', () => fail());
+    });
+  } catch {
+    throw new Error('Task image decoding failed or timed out. Try pasting the image again.');
+  }
+}
+
+async function decodeProjectImages(
+  kind: 'jpeg' | 'webp',
+  images: Uint8Array[],
+): Promise<DecodedImageMetadata[] | null> {
+  if (pendingProjectImageDecodes >= MAX_PENDING_PROJECT_IMAGE_DECODES) {
+    throw new Error('Too many task images are being validated. Wait for the current images and try again.');
+  }
+  pendingProjectImageDecodes += 1;
+  const pending = projectImageDecodeQueue.then(() => decodeProjectImagesNow(kind, images));
+  projectImageDecodeQueue = pending.then(() => undefined, () => undefined);
+  try {
+    return await pending;
+  } finally {
+    pendingProjectImageDecodes -= 1;
+  }
+}
+
+interface StructuredVp8Payload {
+  start: number;
+  length: number;
+  width: number;
+  height: number;
+}
+
+function structuredVp8Payload(
+  bytes: Uint8Array,
+  start: number,
+  length: number,
+): StructuredVp8Payload | null {
+  if (length <= 10 || !startsWithBytes(bytes, [0x9d, 0x01, 0x2a], start + 3)) return null;
   const frameTag = uint24LittleEndian(bytes, start);
   const isKeyFrame = (frameTag & 0x01) === 0;
   const version = (frameTag >>> 1) & 0x07;
@@ -526,14 +636,26 @@ function isStructuredVp8Payload(bytes: Uint8Array, start: number, length: number
   const firstPartitionLength = frameTag >>> 5;
   const bytesAfterFrameHeader = length - 10;
   if (!isKeyFrame || version > 3 || !showFrame
-    || firstPartitionLength === 0 || firstPartitionLength >= bytesAfterFrameHeader) return false;
+    || firstPartitionLength === 0 || firstPartitionLength >= bytesAfterFrameHeader) return null;
   const width = ((bytes[start + 6] ?? 0) + ((bytes[start + 7] ?? 0) << 8)) & 0x3fff;
   const height = ((bytes[start + 8] ?? 0) + ((bytes[start + 9] ?? 0) << 8)) & 0x3fff;
-  return validImageDimensions(width, height);
+  return validImageDimensions(width, height) ? { start, length, width, height } : null;
 }
 
 function isStructuredVp8lPayload(bytes: Uint8Array, start: number, length: number): boolean {
   return hasCompleteVp8lBitstream(bytes, start, length);
+}
+
+function structuredVp8lDimensions(
+  bytes: Uint8Array,
+  start: number,
+  length: number,
+): DecodedImageMetadata | null {
+  if (!isStructuredVp8lPayload(bytes, start, length)) return null;
+  const dimensions = uint32LittleEndian(bytes, start + 1);
+  const width = (dimensions & 0x3fff) + 1;
+  const height = ((dimensions >>> 14) & 0x3fff) + 1;
+  return validImageDimensions(width, height) ? { width, height } : null;
 }
 
 function isStructuredVp8xPayload(bytes: Uint8Array, start: number, length: number): boolean {
@@ -547,10 +669,31 @@ function isStructuredVp8xPayload(bytes: Uint8Array, start: number, length: numbe
   return validImageDimensions(width, height);
 }
 
+interface WebpValidationContext {
+  imageChunks: number;
+  imagePixels: number;
+  lastImage: DecodedImageMetadata | null;
+  lossyPayloads: StructuredVp8Payload[];
+}
+
+function recordWebpImage(
+  context: WebpValidationContext,
+  image: DecodedImageMetadata,
+): boolean {
+  const pixels = image.width * image.height;
+  if (context.imageChunks >= MAX_WEBP_IMAGE_CHUNKS
+    || context.imagePixels > MAX_IMAGE_PIXELS - pixels) return false;
+  context.imageChunks += 1;
+  context.imagePixels += pixels;
+  context.lastImage = image;
+  return true;
+}
+
 function hasStructuredWebpImageChunks(
   bytes: Uint8Array,
   start: number,
   end: number,
+  context: WebpValidationContext,
   nested = false,
 ): boolean {
   let offset = start;
@@ -565,10 +708,13 @@ function hasStructuredWebpImageChunks(
     if (payloadEnd < payloadStart || paddedEnd > end) return false;
 
     if (chunkType === 'VP8 ') {
-      if (!isStructuredVp8Payload(bytes, payloadStart, chunkLength)) return false;
+      const payload = structuredVp8Payload(bytes, payloadStart, chunkLength);
+      if (!payload || !recordWebpImage(context, payload)) return false;
+      context.lossyPayloads.push(payload);
       hasImage = true;
     } else if (chunkType === 'VP8L') {
-      if (!isStructuredVp8lPayload(bytes, payloadStart, chunkLength)) return false;
+      const dimensions = structuredVp8lDimensions(bytes, payloadStart, chunkLength);
+      if (!dimensions || !recordWebpImage(context, dimensions)) return false;
       hasImage = true;
     } else if (chunkType === 'VP8X') {
       if (nested || offset !== start || !isStructuredVp8xPayload(bytes, payloadStart, chunkLength)) return false;
@@ -576,8 +722,12 @@ function hasStructuredWebpImageChunks(
       if (nested || chunkLength < 24) return false;
       const width = uint24LittleEndian(bytes, payloadStart + 6) + 1;
       const height = uint24LittleEndian(bytes, payloadStart + 9) + 1;
+      const imageChunksBefore = context.imageChunks;
       if (!validImageDimensions(width, height)
-        || !hasStructuredWebpImageChunks(bytes, payloadStart + 16, payloadEnd, true)) return false;
+        || !hasStructuredWebpImageChunks(bytes, payloadStart + 16, payloadEnd, context, true)
+        || context.imageChunks !== imageChunksBefore + 1
+        || context.lastImage?.width !== width
+        || context.lastImage.height !== height) return false;
       hasImage = true;
     }
     offset = paddedEnd;
@@ -585,15 +735,51 @@ function hasStructuredWebpImageChunks(
   return offset === end && hasImage;
 }
 
-function isStructuredWebp(bytes: Uint8Array): boolean {
-  return bytes.length >= 20
-    && startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46])
-    && startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
-    && uint32LittleEndian(bytes, 4) + 8 === bytes.length
-    && hasStructuredWebpImageChunks(bytes, 12, bytes.length);
+function inspectStructuredWebp(bytes: Uint8Array): WebpValidationContext | null {
+  if (bytes.length < 20
+    || !startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46])
+    || !startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
+    || uint32LittleEndian(bytes, 4) + 8 !== bytes.length) return null;
+  const context: WebpValidationContext = {
+    imageChunks: 0,
+    imagePixels: 0,
+    lastImage: null,
+    lossyPayloads: [],
+  };
+  return hasStructuredWebpImageChunks(bytes, 12, bytes.length, context) ? context : null;
 }
 
-export function validateProjectTaskImage(value: unknown): ValidatedProjectImage {
+function wrappedVp8Payload(bytes: Uint8Array, payload: StructuredVp8Payload): Uint8Array {
+  const wrapped = Buffer.alloc(20 + payload.length + (payload.length % 2));
+  wrapped.write('RIFF', 0, 'ascii');
+  wrapped.writeUInt32LE(wrapped.length - 8, 4);
+  wrapped.write('WEBP', 8, 'ascii');
+  wrapped.write('VP8 ', 12, 'ascii');
+  wrapped.writeUInt32LE(payload.length, 16);
+  wrapped.set(bytes.subarray(payload.start, payload.start + payload.length), 20);
+  return wrapped;
+}
+
+async function hasDecodedJpegScan(bytes: Uint8Array): Promise<boolean> {
+  const decoded = await decodeProjectImages('jpeg', [bytes]);
+  return decoded?.length === 1;
+}
+
+async function hasDecodedVp8Payloads(
+  bytes: Uint8Array,
+  payloads: StructuredVp8Payload[],
+): Promise<boolean> {
+  if (!payloads.length) return true;
+  const decoded = await decodeProjectImages(
+    'webp',
+    payloads.map((payload) => wrappedVp8Payload(bytes, payload)),
+  );
+  return decoded?.length === payloads.length && payloads.every((payload, index) => (
+    decoded[index]?.width === payload.width && decoded[index]?.height === payload.height
+  ));
+}
+
+export async function validateProjectTaskImage(value: unknown): Promise<ValidatedProjectImage> {
   const candidate = (value ?? {}) as Partial<ProjectTaskImageDraft>;
   if (!(candidate.bytes instanceof Uint8Array)) throw new Error('Pasted image data is invalid.');
   if (!candidate.bytes.byteLength) throw new Error('Pasted image is empty.');
@@ -602,10 +788,11 @@ export function validateProjectTaskImage(value: unknown): ValidatedProjectImage 
   if (isStructuredPng(bytes)) {
     return { bytes, mediaType: 'image/png', extension: 'png' };
   }
-  if (isStructuredJpeg(bytes)) {
+  if (isStructuredJpeg(bytes) && await hasDecodedJpegScan(bytes)) {
     return { bytes, mediaType: 'image/jpeg', extension: 'jpg' };
   }
-  if (isStructuredWebp(bytes)) {
+  const webp = inspectStructuredWebp(bytes);
+  if (webp && await hasDecodedVp8Payloads(bytes, webp.lossyPayloads)) {
     return { bytes, mediaType: 'image/webp', extension: 'webp' };
   }
   throw new Error('Task images must be PNG, JPEG, or WebP files.');
@@ -829,7 +1016,10 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
   }
   const rawImages = Array.isArray(draft.images) ? draft.images : [];
   if (rawImages.length > MAX_TASK_IMAGES) throw new Error(`Attach no more than ${MAX_TASK_IMAGES} images.`);
-  const images = rawImages.map(validateProjectTaskImage);
+  const images: ValidatedProjectImage[] = [];
+  for (const rawImage of rawImages) {
+    images.push(await validateProjectTaskImage(rawImage));
+  }
   const totalBytes = images.reduce((total, image) => total + image.bytes.length, 0);
   if (totalBytes > MAX_TASK_IMAGE_TOTAL_BYTES) throw new Error('Task images must total 12 MB or less.');
   const taskId = await reserveProjectTaskId(workspace, existingTasks);

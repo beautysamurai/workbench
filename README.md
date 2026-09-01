@@ -138,7 +138,7 @@ Workbench deliberately starts conservatively:
 - Network access for sandboxed Codex commands is off by default.
 - Approval policy defaults to **Ask when needed** (`on-request` in the Codex app-server protocol).
 - Context files must lexically and physically resolve under the workspace root; symlink escapes are rejected.
-- Task reference images are size- and signature-checked in the main process, streamed without shell interpolation, and written only under the workspace's checked `.workbench/task-images/` directory.
+- Task reference images are size-, structure-, and compressed-data-checked at the main-process boundary, decoded under explicit time/memory/pixel limits where required, streamed without shell interpolation, and written only under the workspace's checked `.workbench/task-images/` directory.
 - Renderer code has no Node.js access. Electron runs with context isolation, renderer sandboxing, and a narrow preload bridge.
 - External links are opened in the system browser rather than inside the privileged application window.
 - The embedded terminal is an explicit user-controlled process and runs outside the Codex sandbox, just like a normal WSL terminal.

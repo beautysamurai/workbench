@@ -1336,3 +1336,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push the PNG stream correction, resolve the review finding with evidence, then require fresh CI and exact-head automated re-review.
 - Blocker: none established.
+
+### 2026-09-02 00:17 JST — P0-002 accepted JPEG and lossy VP8 decode review findings
+
+**Exact-head review evidence and reproduction**
+
+- Exact head `c183dec` passed both workflow events: Linux verification completed in 16 and 17 seconds, and Windows verification/package jobs completed in 1 minute 48 seconds and 1 minute 52 seconds.
+- Automated Codex review completed on exact head `c183dec` and opened two P2 findings: JPEG acceptance counted entropy bytes without decoding them against frame/table definitions, and lossy WebP acceptance bounded the VP8 envelope without decoding its first and token partitions.
+- Both findings are accepted. A direct compiled reproducer supplied the prior tableless 1×1 JPEG with one arbitrary scan byte and changed byte 30 of the official 1×1 lossy WebP fixture to `0xff`; the pre-fix validator reported both as accepted and exited `1`.
+
+**Scoped correction**
+
+- JPEG candidates retain the strict marker walk and now must fully decode their tables and scan data. Lossy WebP candidates retain the RIFF/frame checks and every VP8 image payload, including animated-frame payloads, is wrapped at its declared boundary and decoded through libwebp.
+- Decoding runs outside the Electron main thread through a globally serialized queue capped at eight pending requests. Input remains capped at 5 MiB per image; dimensions remain capped at 40 million pixels; aggregate WebP frames are capped at 128 and 40 million pixels; worker heap/stack limits are explicit; and a 15-second timeout terminates stalled work. Images in one task are validated sequentially.
+- Focused regressions replace the former synthetic JPEG positive case with a complete independently Electron-accepted fixture. They reject the exact tableless scan, a real JPEG with truncated entropy data, a corrupt VP8 control partition, and an all-`0xff` VP8 token partition while retaining valid baseline JPEG, official lossy WebP, transformed/sparse lossless WebP, extended WebP, and prior PNG cases. Nine simultaneous decode requests deterministically admit the capped eight and reject the excess request with an actionable retry error.
+- Production dependencies are pinned to `jpeg-js@0.4.4` and `webp-wasm@1.0.6`. Packaging includes both decoder modules, the worker script, and `webp_node_dec.wasm`.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | Focused complete JPEG, tableless/truncated JPEG, valid lossy WebP, corrupt VP8 control/token partition, bounded decode-queue, PNG, and VP8L regressions passed; exit `0`. |
+| passed | direct compiled two-payload reproducer | Both formerly accepted malformed payloads now throw the supported-image validation error; exit `0`. |
+| passed | compiled validator against `/usr/share/emscripten/tests/screenshot.jpg` | The real 50,759-byte baseline JPEG remains accepted as `image/jpeg`; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus ASAR inventory/runtime validation | Linux directory packaging completed; the archive contains the decoder worker and WebP WASM; Electron loaded both JPEG and WebP decoders directly from `app.asar`; exit `0`. |
+| passed | built Electron validator smoke | A real JPEG and official lossy WebP were accepted, the corrupt VP8 partition was rejected, and no scoped Electron/worker process remained; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-decode-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The isolated production app remained running until intentional SIGINT; no scoped Electron or decoder-worker process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Commit and push this exact-head decode correction, reply to and resolve both review findings with commit evidence, then require fresh CI and automated review on the new head.
+- Blocker: none established.

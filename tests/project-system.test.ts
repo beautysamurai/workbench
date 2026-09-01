@@ -64,12 +64,22 @@ function interlacedTinyPng(): Uint8Array {
 }
 
 function tinyJpeg(): Uint8Array {
+  // Independently accepted by Electron's JPEG decoder; includes complete tables and scan data.
+  return Uint8Array.from(Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSgBBwcHCggKEwoKEygaFhooKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKP/AABEIAAEAAQMBEQACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/APOq+OP6RP8A/9k=', 'base64'));
+}
+
+function tablelessJpeg(): Uint8Array {
   return Uint8Array.from([
     0xff, 0xd8,
     0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
     0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00,
     0x00, 0xff, 0xd9,
   ]);
+}
+
+function jpegWithTruncatedScan(): Uint8Array {
+  const bytes = tinyJpeg();
+  return Uint8Array.from([...bytes.slice(0, -5), ...bytes.slice(-2)]);
 }
 
 function tinyWebp(): Uint8Array {
@@ -96,6 +106,11 @@ function tinyLossyWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRlYAAABXRUJQVlA4IDoAAADwAgCdASoBAAEAAEcIhYWIhYSIAgICdaoD+AP6Ag1NGAD+/vNYf/5gZt2KO//mBv/80F4SW6//zLwASUNNVAgAAAB0ZXN0MXgxAA==', 'base64'));
 }
 
+function patternedLossyWebp(): Uint8Array {
+  // Deterministic 16x16 RGBA gradient encoded by libwebp.
+  return Uint8Array.from(Buffer.from('UklGRsAAAABXRUJQVlA4ILQAAACwAgCdASoQABAAAkA4JbACdDKlPYAIgAeDwj/nXgAA/vucZH542rD9UItBMVXAykB/n9gqNdXXV0UvS3+V7ik71gsTiFVzqnEvFYdTfspad039DqfsOp8MP05ukNg/sU94R4FfS+BZMlJsDkkAudAREdWaCRcx8fQRnk81yNinP4Zf/Jmf3EYv2P+3aO9cKq/xwGBKB/vWXd5981+yn+ExrPufv3x/2wHQYdF6f0/FZ57gAAA=', 'base64'));
+}
+
 function losslessWebpWithPayload(payload: Uint8Array): Uint8Array {
   const bytes = Buffer.alloc(20 + payload.length + (payload.length % 2));
   bytes.write('RIFF', 0, 'ascii');
@@ -112,6 +127,23 @@ function lossyWebpWithFrameTag(frameTag: number): Uint8Array {
   bytes[20] = frameTag & 0xff;
   bytes[21] = (frameTag >>> 8) & 0xff;
   bytes[22] = (frameTag >>> 16) & 0xff;
+  return bytes;
+}
+
+function lossyWebpWithCorruptFirstPartition(): Uint8Array {
+  const bytes = tinyLossyWebp();
+  bytes[30] = 0xff;
+  return bytes;
+}
+
+function lossyWebpWithCorruptTokenPartition(): Uint8Array {
+  const bytes = patternedLossyWebp();
+  const payloadStart = 20;
+  const frameTag = (bytes[payloadStart] ?? 0)
+    + ((bytes[payloadStart + 1] ?? 0) << 8)
+    + ((bytes[payloadStart + 2] ?? 0) << 16);
+  const tokenStart = payloadStart + 10 + (frameTag >>> 5);
+  bytes.fill(0xff, tokenStart, payloadStart + 180);
   return bytes;
 }
 
@@ -183,86 +215,103 @@ test('only parses parent and attachment metadata from their top-level fields', (
   ]);
 });
 
-test('validates supported image bytes without filesystem access', () => {
-  assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.of(1, 2, 3) }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }), /PNG, JPEG, or WebP/);
-  assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
-  assert.equal(validateProjectTaskImage({ bytes: interlacedTinyPng() }).mediaType, 'image/png');
-  assert.equal(validateProjectTaskImage({ bytes: splitImageDataPng() }).mediaType, 'image/png');
-  assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
-  assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
-  assert.equal(validateProjectTaskImage({ bytes: transformedLosslessWebp() }).mediaType, 'image/webp');
-  assert.equal(validateProjectTaskImage({ bytes: losslessWebpWithUnusedSimpleSymbol() }).mediaType, 'image/webp');
-  assert.equal(validateProjectTaskImage({ bytes: tinyLossyWebp() }).mediaType, 'image/webp');
-  assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
+test('validates supported image bytes before workspace filesystem writes', async () => {
+  await assert.rejects(validateProjectTaskImage({ bytes: Uint8Array.of(1, 2, 3) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }),
+    /PNG, JPEG, or WebP/,
+  );
+  assert.equal((await validateProjectTaskImage({ bytes: tinyPng() })).mediaType, 'image/png');
+  assert.equal((await validateProjectTaskImage({ bytes: interlacedTinyPng() })).mediaType, 'image/png');
+  assert.equal((await validateProjectTaskImage({ bytes: splitImageDataPng() })).mediaType, 'image/png');
+  assert.equal((await validateProjectTaskImage({ bytes: tinyJpeg() })).mediaType, 'image/jpeg');
+  assert.equal((await validateProjectTaskImage({ bytes: tinyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: transformedLosslessWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: losslessWebpWithUnusedSimpleSymbol() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: tinyLossyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: patternedLossyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: extendedTinyWebp() })).mediaType, 'image/webp');
 });
 
-test('rejects JPEGs without a bounded scan and encoded image data', () => {
+test('rejects JPEGs without decodable tables, scans, and encoded image data', async () => {
   const withoutScan = Uint8Array.from([
     0xff, 0xd8,
     0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
     0xff, 0xd9,
   ]);
-  assert.throws(() => validateProjectTaskImage({ bytes: withoutScan }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: tinyJpeg().slice(0, -1) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: withoutScan }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: tablelessJpeg() }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: jpegWithTruncatedScan() }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: tinyJpeg().slice(0, -1) }), /PNG, JPEG, or WebP/);
 });
 
-test('rejects PNGs without image data or with corrupted chunk data', () => {
+test('bounds concurrent compressed-image decoding', async () => {
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: 9 }, () => validateProjectTaskImage({ bytes: tinyJpeg() })),
+  );
+  assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 8);
+  const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+  assert.match(String(rejected?.status === 'rejected' ? rejected.reason : ''), /Too many task images/);
+});
+
+test('rejects PNGs without image data or with corrupted chunk data', async () => {
   const png = tinyPng();
   const withoutImageData = new Uint8Array(45);
   withoutImageData.set(png.slice(0, 33));
   withoutImageData.set(png.slice(-12), 33);
-  assert.throws(() => validateProjectTaskImage({ bytes: withoutImageData }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: withoutImageData }), /PNG, JPEG, or WebP/);
 
   const corruptImageData = Uint8Array.from(png);
   const imageDataType = Buffer.from(corruptImageData).indexOf('IDAT');
   assert.notEqual(imageDataType, -1);
   corruptImageData[imageDataType + 4] ^= 0x01;
-  assert.throws(() => validateProjectTaskImage({ bytes: corruptImageData }), /PNG, JPEG, or WebP/);
-  assert.throws(
-    () => validateProjectTaskImage({ bytes: pngWithImageData(Uint8Array.from({ length: 11 }, () => 0x41)) }),
+  await assert.rejects(validateProjectTaskImage({ bytes: corruptImageData }), /PNG, JPEG, or WebP/);
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: pngWithImageData(Uint8Array.from({ length: 11 }, () => 0x41)) }),
     /PNG, JPEG, or WebP/,
   );
-  assert.throws(
-    () => validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(5, 0, 0))) }),
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(5, 0, 0))) }),
     /PNG, JPEG, or WebP/,
   );
-  assert.throws(
-    () => validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(0, 0))) }),
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(0, 0))) }),
     /PNG, JPEG, or WebP/,
   );
 });
 
-test('rejects malformed WebP chunks and oversized bytes before copying', () => {
+test('rejects malformed WebP chunks, corrupt VP8 partitions, and oversized bytes before copying', async () => {
   const emptyVp8x = Buffer.alloc(20);
   emptyVp8x.write('RIFF', 0, 'ascii');
   emptyVp8x.writeUInt32LE(12, 4);
   emptyVp8x.write('WEBP', 8, 'ascii');
   emptyVp8x.write('VP8X', 12, 'ascii');
   emptyVp8x.writeUInt32LE(0, 16);
-  assert.throws(() => validateProjectTaskImage({ bytes: emptyVp8x }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: tinyWebp().slice(0, -1) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: emptyVp8x }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: tinyWebp().slice(0, -1) }), /PNG, JPEG, or WebP/);
   const losslessPayload = tinyWebp().slice(20, 33);
   for (let length = 5; length < losslessPayload.length; length += 1) {
-    assert.throws(
-      () => validateProjectTaskImage({ bytes: losslessWebpWithPayload(losslessPayload.slice(0, length)) }),
+    await assert.rejects(
+      validateProjectTaskImage({ bytes: losslessWebpWithPayload(losslessPayload.slice(0, length)) }),
       /PNG, JPEG, or WebP/,
     );
   }
-  assert.throws(
-    () => validateProjectTaskImage({ bytes: losslessWebpWithPayload(Uint8Array.of(0x2f, 0, 0, 0, 0, 0)) }),
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: losslessWebpWithPayload(Uint8Array.of(0x2f, 0, 0, 0, 0, 0)) }),
     /PNG, JPEG, or WebP/,
   );
   const validFrameTag = 0x02f0;
-  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x01) }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x08) }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag & ~0x10) }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(0x10) }), /PNG, JPEG, or WebP/);
-  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag((49 << 5) | 0x10) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x01) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x08) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag & ~0x10) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(0x10) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag((49 << 5) | 0x10) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptFirstPartition() }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptTokenPartition() }), /PNG, JPEG, or WebP/);
 
   const oversized = new Uint8Array((5 * 1024 * 1024) + 1);
   Object.defineProperty(oversized, Symbol.iterator, {
     value: () => { throw new Error('Oversized bytes were copied.'); },
   });
-  assert.throws(() => validateProjectTaskImage({ bytes: oversized }), /5 MB or smaller/);
+  await assert.rejects(validateProjectTaskImage({ bytes: oversized }), /5 MB or smaller/);
 });

@@ -17,6 +17,7 @@
     "tests/**/*.ts",
     "src/main/codex-protocol.ts",
     "src/main/path-utils.ts",
+    "src/main/project-image-decoder-worker.ts",
     "src/main/project-system.ts",
     "src/main/wsl.ts",
     "src/main/context-format.ts",
