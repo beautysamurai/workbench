@@ -16,7 +16,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 ### Changed
 
 - Model and reasoning-effort choices now belong to each Codex thread instead of the whole workspace.
-- New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while legacy priority-prefixed IDs remain supported.
+- New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while legacy priority-prefixed and UUID-style IDs remain supported.
 
 ### Fixed
 
@@ -24,6 +24,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Preserved a resumed thread's effective model when it is hidden or temporarily absent from the visible model catalog.
 - Fixed Codex thread creation, resume, and turn startup by sending approval and thread-sandbox settings in the app-server's required wire format.
 - Removed internal Codex reasoning-status rows from conversation logs while keeping user-facing progress and results visible.
+- Images added while a task submission is still completing now remain attached to the next draft instead of being cleared with the submitted images.
 
 ### Security
 

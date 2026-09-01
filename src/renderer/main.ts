@@ -41,6 +41,7 @@ import { createMockApi } from './mock-api.js';
 import {
   buildProjectTaskTree,
   mergeProjectTaskImages,
+  removeSubmittedProjectTaskImages,
   type ProjectTaskTreeNode,
 } from './project-tasks.js';
 import { TerminalBuffer } from './terminal-buffer.js';
@@ -1251,7 +1252,7 @@ async function submitProjectTask(): Promise<void> {
   if (!workspace || !form || !form.reportValidity() || ui.projectLoading.has(workspace.id)) return;
   const data = new FormData(form);
   const previousTaskIds = new Set(ui.projectSystems.get(workspace.id)?.tasks.map((task) => task.id) ?? []);
-  const images = ui.projectTaskImages.get(workspace.id) ?? [];
+  const submittedImages = [...(ui.projectTaskImages.get(workspace.id) ?? [])];
   ui.projectLoading.add(workspace.id);
   form.setAttribute('aria-busy', 'true');
   const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -1268,12 +1269,17 @@ async function submitProjectTask(): Promise<void> {
       priority: String(data.get('priority') ?? 'P2') as ProjectTaskPriority,
       parentId: String(data.get('parentId') ?? '') || null,
       acceptanceCriteria: String(data.get('acceptanceCriteria') ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
-      images: images.map(({ name, mediaType, bytes }) => ({ name, mediaType, bytes })),
+      images: submittedImages.map(({ name, mediaType, bytes }) => ({ name, mediaType, bytes })),
     }));
     const created = ui.projectSystems.get(workspace.id)?.tasks.find((task) => !previousTaskIds.has(task.id));
     createdId = created?.id ?? createdId;
     ui.projectTaskDrafts.delete(workspace.id);
-    ui.projectTaskImages.delete(workspace.id);
+    const remainingImages = removeSubmittedProjectTaskImages(
+      ui.projectTaskImages.get(workspace.id) ?? [],
+      submittedImages,
+    );
+    if (remainingImages.length) ui.projectTaskImages.set(workspace.id, remainingImages);
+    else ui.projectTaskImages.delete(workspace.id);
     succeeded = true;
   } catch (error) {
     toast(errorMessage(error), 'error');

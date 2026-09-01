@@ -13,7 +13,8 @@ import { shellQuote } from './path-utils';
 import { runWslCommand } from './wsl';
 
 const PROJECT_FILES = ['AGENTS.md', 'TASKS.md', 'WORKBENCH_PROGRESS.md'] as const;
-const TASK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*-\d+$/;
+const NUMERIC_TASK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*-\d+$/;
+const LEGACY_RANDOM_TASK_ID_PATTERN = /^WB-[A-F0-9]{8}$/i;
 const PROJECT_IMAGE_DIRECTORY = '.workbench/task-images';
 const MAX_TASK_IMAGES = 4;
 const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -57,6 +58,10 @@ function normalizeTaskState(value: string): ProjectTaskState {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'in progress' || normalized === 'blocked' || normalized === 'done') return normalized;
   return 'pending';
+}
+
+function isProjectTaskId(value: string): boolean {
+  return NUMERIC_TASK_ID_PATTERN.test(value) || LEGACY_RANDOM_TASK_ID_PATTERN.test(value);
 }
 
 function normalizeTaskPriority(value: unknown, legacyId = ''): ProjectTaskPriority {
@@ -120,11 +125,11 @@ export function parseProjectTasks(markdown: string): ProjectTask[] {
       state: normalizeTaskState(state),
       priority: normalizeTaskPriority(priority, id),
       objective: cleanSingleLine(objective, 500),
-      parentId: TASK_ID_PATTERN.test(parentId) ? parentId : null,
+      parentId: isProjectTaskId(parentId) ? parentId : null,
       acceptanceCriteria: parseAcceptanceCriteria(block),
       attachments: parseAttachments(block),
     };
-  }).filter((task) => TASK_ID_PATTERN.test(task.id) && task.title);
+  }).filter((task) => isProjectTaskId(task.id) && task.title);
 }
 
 export function nextProjectTaskId(tasks: ProjectTask[], highWater = 0): string {
@@ -174,8 +179,8 @@ export function formatProjectTask(
   const parentId = cleanSingleLine(task.parentId, 100);
   const criteria = cleanCriteria(task.acceptanceCriteria);
   if (!title) throw new Error('Enter a task title.');
-  if (!TASK_ID_PATTERN.test(id)) throw new Error('Task id is invalid.');
-  if (parentId && !TASK_ID_PATTERN.test(parentId)) throw new Error('Parent task id is invalid.');
+  if (!isProjectTaskId(id)) throw new Error('Task id is invalid.');
+  if (parentId && !isProjectTaskId(parentId)) throw new Error('Parent task id is invalid.');
   const lines = [
     `### ${id} — ${title}`,
     '',
@@ -230,15 +235,96 @@ function validImageDimensions(width: number, height: number): boolean {
   return width > 0 && height > 0 && width <= 16_384 && height <= 16_384 && width * height <= 40_000_000;
 }
 
+const PNG_CRC_TABLE = Uint32Array.from({ length: 256 }, (_unused, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) !== 0 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function pngCrc32(bytes: Uint8Array, start: number, end: number): number {
+  let value = 0xffffffff;
+  for (let index = start; index < end; index += 1) {
+    value = (value >>> 8) ^ (PNG_CRC_TABLE[(value ^ (bytes[index] ?? 0)) & 0xff] ?? 0);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function isPngChunkType(bytes: Uint8Array, offset: number): boolean {
+  for (let index = offset; index < offset + 4; index += 1) {
+    const value = bytes[index] ?? 0;
+    if (!((value >= 0x41 && value <= 0x5a) || (value >= 0x61 && value <= 0x7a))) return false;
+  }
+  return ((bytes[offset + 2] ?? 0) & 0x20) === 0;
+}
+
+function validPngHeader(bytes: Uint8Array, dataStart: number): boolean {
+  const bitDepth = bytes[dataStart + 8] ?? 0;
+  const colorType = bytes[dataStart + 9] ?? -1;
+  const validBitDepths: Record<number, number[]> = {
+    0: [1, 2, 4, 8, 16],
+    2: [8, 16],
+    3: [1, 2, 4, 8],
+    4: [8, 16],
+    6: [8, 16],
+  };
+  return validImageDimensions(uint32BigEndian(bytes, dataStart), uint32BigEndian(bytes, dataStart + 4))
+    && (validBitDepths[colorType]?.includes(bitDepth) ?? false)
+    && bytes[dataStart + 10] === 0
+    && bytes[dataStart + 11] === 0
+    && (bytes[dataStart + 12] === 0 || bytes[dataStart + 12] === 1);
+}
+
 function isStructuredPng(bytes: Uint8Array): boolean {
   if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return false;
-  const width = uint32BigEndian(bytes, 16);
-  const height = uint32BigEndian(bytes, 20);
-  return uint32BigEndian(bytes, 8) === 13
-    && startsWithBytes(bytes, [0x49, 0x48, 0x44, 0x52], 12)
-    && validImageDimensions(width, height)
-    && uint32BigEndian(bytes, bytes.length - 12) === 0
-    && startsWithBytes(bytes, [0x49, 0x45, 0x4e, 0x44], bytes.length - 8);
+  let offset = 8;
+  let colorType = -1;
+  let bitDepth = 0;
+  let hasPalette = false;
+  let hasImageData = false;
+  let imageDataEnded = false;
+  let imageDataBytes = 0;
+
+  while (offset < bytes.length) {
+    if (offset + 12 > bytes.length || !isPngChunkType(bytes, offset + 4)) return false;
+    const length = uint32BigEndian(bytes, offset);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const chunkEnd = dataEnd + 4;
+    if (dataEnd < dataStart || chunkEnd > bytes.length) return false;
+    if (pngCrc32(bytes, offset + 4, dataEnd) !== uint32BigEndian(bytes, dataEnd)) return false;
+
+    const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
+    if (offset === 8) {
+      if (type !== 'IHDR' || length !== 13 || !validPngHeader(bytes, dataStart)) return false;
+      bitDepth = bytes[dataStart + 8] ?? 0;
+      colorType = bytes[dataStart + 9] ?? -1;
+    } else if (type === 'IHDR') {
+      return false;
+    } else if (type === 'PLTE') {
+      const entries = length / 3;
+      if (hasPalette || hasImageData || colorType === 0 || colorType === 4
+        || length === 0 || length % 3 !== 0 || entries > 256
+        || (colorType === 3 && entries > (2 ** bitDepth))) return false;
+      hasPalette = true;
+    } else if (type === 'IDAT') {
+      if (imageDataEnded) return false;
+      hasImageData = true;
+      imageDataBytes += length;
+    } else if (type === 'IEND') {
+      return length === 0
+        && hasImageData
+        && imageDataBytes > 0
+        && (colorType !== 3 || hasPalette)
+        && chunkEnd === bytes.length;
+    } else {
+      if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return false;
+      if (hasImageData) imageDataEnded = true;
+    }
+    offset = chunkEnd;
+  }
+  return false;
 }
 
 function isStructuredJpeg(bytes: Uint8Array): boolean {

@@ -51,6 +51,19 @@ test('round-trips structured tasks and ignores placeholder headings', () => {
   assert.equal(nextProjectTaskId([...tasks, { ...tasks[0], id: 'P2-019' }]), 'WB-020');
 });
 
+test('preserves legacy random task ids and allows new children to reference them', () => {
+  const markdown = `### WB-A1B2C3D4 — Legacy task\n\n- **State:** pending\n- **Objective:** Stay visible.\n`;
+  const legacyTask = parseProjectTasks(markdown)[0];
+  assert.equal(legacyTask?.id, 'WB-A1B2C3D4');
+  const child = formatProjectTask({
+    title: 'Child task',
+    objective: 'Reference the legacy task.',
+    priority: 'P1',
+    parentId: 'WB-A1B2C3D4',
+  }, 'WB-001');
+  assert.equal(parseProjectTasks(`${markdown}\n${child}`)[1]?.parentId, 'WB-A1B2C3D4');
+});
+
 test('only parses parent and attachment metadata from their top-level fields', () => {
   const markdown = `### WB-010 — Literal metadata examples
 
@@ -76,6 +89,20 @@ test('validates supported image bytes without filesystem access', () => {
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
+});
+
+test('rejects PNGs without image data or with corrupted chunk data', () => {
+  const png = tinyPng();
+  const withoutImageData = new Uint8Array(45);
+  withoutImageData.set(png.slice(0, 33));
+  withoutImageData.set(png.slice(-12), 33);
+  assert.throws(() => validateProjectTaskImage({ bytes: withoutImageData }), /PNG, JPEG, or WebP/);
+
+  const corruptImageData = Uint8Array.from(png);
+  const imageDataType = Buffer.from(corruptImageData).indexOf('IDAT');
+  assert.notEqual(imageDataType, -1);
+  corruptImageData[imageDataType + 4] ^= 0x01;
+  assert.throws(() => validateProjectTaskImage({ bytes: corruptImageData }), /PNG, JPEG, or WebP/);
 });
 
 test('rejects malformed WebP chunks and oversized bytes before copying', () => {

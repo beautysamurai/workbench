@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ProjectTask } from '../src/shared/types';
-import { buildProjectTaskTree, mergeProjectTaskImages } from '../src/renderer/project-tasks';
+import {
+  buildProjectTaskTree,
+  mergeProjectTaskImages,
+  removeSubmittedProjectTaskImages,
+} from '../src/renderer/project-tasks';
 
 function task(id: string, parentId: string | null = null): ProjectTask {
   return {
@@ -60,5 +64,14 @@ test('merges overlapping image reads against the latest task draft', async () =>
       bytes: Uint8Array.of(index),
     }))),
     /no more than 4/,
+  );
+});
+
+test('keeps images added while an earlier task submission is pending', () => {
+  const submitted = { id: 'submitted', bytes: Uint8Array.of(1) };
+  const addedWhilePending = { id: 'new', bytes: Uint8Array.of(2) };
+  assert.deepEqual(
+    removeSubmittedProjectTaskImages([submitted, addedWhilePending], [submitted]),
+    [addedWhilePending],
   );
 });

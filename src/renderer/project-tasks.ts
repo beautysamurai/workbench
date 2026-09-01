@@ -63,3 +63,11 @@ export function mergeProjectTaskImages<T extends Pick<ProjectTaskImageDraft, 'by
   }
   return combined;
 }
+
+export function removeSubmittedProjectTaskImages<T>(
+  current: readonly T[],
+  submitted: readonly T[],
+): T[] {
+  const submittedImages = new Set(submitted);
+  return current.filter((image) => !submittedImages.has(image));
+}
