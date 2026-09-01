@@ -24,9 +24,25 @@ function tinyWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
 }
 
+function transformedLosslessWebp(): Uint8Array {
+  // Deterministic 17x9 RGBA fixture with a predictor transform and nontrivial prefix codes.
+  return Uint8Array.from(Buffer.from('UklGRrAAAABXRUJQVlA4TKQAAAAvEAACEJkKRPQ/NhHR/4CDSJIU6ZiZ4f/Tv9CPtaCgbRs5tHuNIm4iSRaV/z8g4eloCcRPAjESTsdJIEbCi5GwOp4EkgFUm7YBszn1kGgf40wjjzLqbLOPMeZYc88z7njjmxIJIJAEAsi/P6BRSKRRCKRTCKBTCQgyAUBnZ2JhoJJAY2NmZaAQGGQSAwsalYQgEwA0dma+eOCNX5754I8XVkYKAQ==', 'base64'));
+}
+
 function tinyLossyWebp(): Uint8Array {
   // Official libwebp-test-data small_1x1.webp fixture.
   return Uint8Array.from(Buffer.from('UklGRlYAAABXRUJQVlA4IDoAAADwAgCdASoBAAEAAEcIhYWIhYSIAgICdaoD+AP6Ag1NGAD+/vNYf/5gZt2KO//mBv/80F4SW6//zLwASUNNVAgAAAB0ZXN0MXgxAA==', 'base64'));
+}
+
+function losslessWebpWithPayload(payload: Uint8Array): Uint8Array {
+  const bytes = Buffer.alloc(20 + payload.length + (payload.length % 2));
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WEBP', 8, 'ascii');
+  bytes.write('VP8L', 12, 'ascii');
+  bytes.writeUInt32LE(payload.length, 16);
+  payload.forEach((value, index) => { bytes[20 + index] = value; });
+  return bytes;
 }
 
 function lossyWebpWithFrameTag(frameTag: number): Uint8Array {
@@ -111,6 +127,7 @@ test('validates supported image bytes without filesystem access', () => {
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
   assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
+  assert.equal(validateProjectTaskImage({ bytes: transformedLosslessWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: tinyLossyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
 });
@@ -148,6 +165,17 @@ test('rejects malformed WebP chunks and oversized bytes before copying', () => {
   emptyVp8x.writeUInt32LE(0, 16);
   assert.throws(() => validateProjectTaskImage({ bytes: emptyVp8x }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: tinyWebp().slice(0, -1) }), /PNG, JPEG, or WebP/);
+  const losslessPayload = tinyWebp().slice(20, 33);
+  for (let length = 5; length < losslessPayload.length; length += 1) {
+    assert.throws(
+      () => validateProjectTaskImage({ bytes: losslessWebpWithPayload(losslessPayload.slice(0, length)) }),
+      /PNG, JPEG, or WebP/,
+    );
+  }
+  assert.throws(
+    () => validateProjectTaskImage({ bytes: losslessWebpWithPayload(Uint8Array.of(0x2f, 0, 0, 0, 0, 0)) }),
+    /PNG, JPEG, or WebP/,
+  );
   const validFrameTag = 0x02f0;
   assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x01) }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x08) }), /PNG, JPEG, or WebP/);

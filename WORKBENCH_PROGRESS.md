@@ -8,8 +8,8 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 - **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 exact-head review correction)
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Publish the accepted exact-head review corrections, then require fresh CI and automated re-review on PR #5
+- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments, including bounded decoding of lossless WebP streams; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
+- **Next action:** Publish the accepted VP8L exact-head review correction, then require fresh CI and automated re-review on PR #5
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -1245,4 +1245,37 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and push this fifth review correction, reply to and resolve both findings with exact-commit evidence, then require fresh push/pull-request CI and another exact-head automated review.
+- Blocker: none established.
+
+### 2026-09-01 22:35 JST — P0-002 accepted truncated VP8L review finding
+
+**Exact-head review evidence and reproduction**
+
+- Commit `76d8649` passed both workflow events: Linux verification completed in 14 and 16 seconds, and both Windows portable/package jobs completed in 1 minute 51 seconds.
+- Automated Codex review completed on exact head `76d8649` and opened one P2 finding: a six-byte VP8L payload containing only the signature, dimensions/version word, and one arbitrary byte passed because validation stopped after the five-byte lossless header.
+- The finding is accepted. A direct compiled reproducer built a correctly bounded 26-byte RIFF/WebP container around payload `2f 00 00 00 00 00`; the pre-fix validator reported `BUG: accepted image/webp with 26 bytes` and exited `1`.
+
+**Diagnosis and scoped correction**
+
+- Electron `nativeImage.createFromBuffer` was tested as a possible complete-codec boundary, but returned an empty image for both the malformed payload and the known-good lossless fixture. It cannot safely distinguish supported WebP input in this runtime.
+- Added a bounded VP8L parser that reads optional transforms, color-cache metadata, complete canonical prefix-code trees, meta-prefix groups, literals, LZ77 distances/lengths, and cache references until the dimensions' implicit pixel count is satisfied. Every read is constrained to the declared VP8L chunk; duplicate transforms, invalid trees/cache sizes/references, overlong copies, and premature end-of-stream fail closed.
+- Focused regression coverage retains a transformed 17×9 lossless fixture, rejects the exact arbitrary six-byte stream, and rejects every shortened payload prefix of the known-good 1×1 fixture even when RIFF and VP8L lengths are adjusted to match the truncation.
+- Five deterministic images encoded by the installed libwebp (`1×1`, `2×2`, `17×9`, `64×64`, and `257×33`) were accepted, while every shortened payload was rejected. A 500-case differential mutation check agreed exactly with libwebp: 119 mutations were accepted by both decoders, 381 rejected by both, and zero outcomes diverged.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | The focused image/task-system file passed the transformed lossless fixture, exact six-byte rejection, all truncated-prefix cases, and prior PNG/JPEG/VP8 regressions; exit `0`. |
+| passed | direct compiled six-byte VP8L reproducer | The formerly accepted payload now throws the supported-image validation error; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-vp8l-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The isolated production app remained running under WSLg until intentional SIGINT; the scoped process check found no Electron process afterward. Existing DBus/GPU warnings were non-fatal. |
+| passed | `git diff --check` and scoped diff review | No whitespace errors; changes are limited to bounded VP8L validation, focused fixtures/regressions, and task/changelog/progress evidence. |
+
+**Next action**
+
+- Commit and push this sixth review correction, reply to and resolve the finding with exact-commit evidence, then require fresh push/pull-request CI and another exact-head automated review.
 - Blocker: none established.

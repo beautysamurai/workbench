@@ -10,6 +10,7 @@ import type {
   Workspace,
 } from '../shared/types';
 import { shellQuote } from './path-utils';
+import { hasCompleteVp8lBitstream } from './vp8l-validator';
 import { runWslCommand } from './wsl';
 
 const PROJECT_FILES = ['AGENTS.md', 'TASKS.md', 'WORKBENCH_PROGRESS.md'] as const;
@@ -442,11 +443,7 @@ function isStructuredVp8Payload(bytes: Uint8Array, start: number, length: number
 }
 
 function isStructuredVp8lPayload(bytes: Uint8Array, start: number, length: number): boolean {
-  if (length <= 5 || bytes[start] !== 0x2f) return false;
-  const dimensions = uint32LittleEndian(bytes, start + 1);
-  const width = (dimensions & 0x3fff) + 1;
-  const height = ((dimensions >>> 14) & 0x3fff) + 1;
-  return (dimensions >>> 29) === 0 && validImageDimensions(width, height);
+  return hasCompleteVp8lBitstream(bytes, start, length);
 }
 
 function isStructuredVp8xPayload(bytes: Uint8Array, start: number, length: number): boolean {
