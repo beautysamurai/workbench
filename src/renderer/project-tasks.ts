@@ -1,7 +1,71 @@
-import type { ProjectTask, ProjectTaskImageDraft } from '../shared/types.js';
+import type { ProjectTask, ProjectTaskImageDraft, ProjectTaskState } from '../shared/types.js';
+
+export type SupportedTaskImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp';
 
 const MAX_TASK_IMAGES = 4;
 const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+
+export interface ClipboardFileLike {
+  readonly type: string;
+}
+
+export interface ClipboardItemLike<TFile extends ClipboardFileLike = ClipboardFileLike> {
+  readonly kind: string;
+  readonly type: string;
+  getAsFile(): TFile | null;
+}
+
+export interface ClipboardTaskImage<TFile extends ClipboardFileLike = ClipboardFileLike> {
+  file: TFile;
+  mediaType: SupportedTaskImageMediaType;
+}
+
+export interface ProjectTaskStatePresentation {
+  label: string;
+  className: string;
+  iconName: string;
+}
+
+export interface ProjectTaskQueueSummary {
+  open: number;
+  done: number;
+}
+
+export function supportedTaskImageMediaType(value: string): SupportedTaskImageMediaType | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'image/png') return 'image/png';
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'image/jpeg';
+  if (normalized === 'image/webp') return 'image/webp';
+  return null;
+}
+
+export function clipboardTaskImages<TFile extends ClipboardFileLike>(
+  items: readonly ClipboardItemLike<TFile>[],
+): ClipboardTaskImage<TFile>[] {
+  return items.flatMap((item) => {
+    if (item.kind !== 'file') return [];
+    const file = item.getAsFile();
+    const mediaType = supportedTaskImageMediaType(item.type || file?.type || '');
+    return file && mediaType ? [{ file, mediaType }] : [];
+  });
+}
+
+export function projectTaskStatePresentation(state: ProjectTaskState): ProjectTaskStatePresentation {
+  switch (state) {
+    case 'in progress': return { label: 'In progress', className: 'state-in-progress', iconName: 'play' };
+    case 'blocked': return { label: 'Blocked', className: 'state-blocked', iconName: 'alert' };
+    case 'done': return { label: 'Done', className: 'state-done', iconName: 'check' };
+    default: return { label: 'Pending', className: 'state-pending', iconName: 'clock' };
+  }
+}
+
+export function summarizeProjectTaskQueue(tasks: readonly ProjectTask[]): ProjectTaskQueueSummary {
+  return tasks.reduce((summary, task) => {
+    if (task.state === 'done') summary.done += 1;
+    else summary.open += 1;
+    return summary;
+  }, { open: 0, done: 0 });
+}
 
 export interface ProjectTaskTreeNode {
   task: ProjectTask;

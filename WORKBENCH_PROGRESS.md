@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 exact-head review correction)
+- **Active task:** P0-002 exact-head delivery review; WB-006 final corrected-P0 replay in progress locally
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments, including bounded decoding of lossless WebP streams; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Publish the accepted image-stream exact-head review correction, then require fresh CI and automated re-review on PR #5
+- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and bounded complete PNG/JPEG/VP8/VP8L attachment validation; WB-006 was verified on an earlier corrected P0-002 head with whole-form image paste, compact task composition, explicit queue states, iterative rendering, draft preservation, and ambiguity guards; merged P1-004 gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
+- **Next action:** Complete PR #5 exact-head CI/review and verify this WB-006 replay on `c9e77c6`; after a separately authorized P0-002 merge, transfer WB-006 to a fresh branch from updated `origin/main`
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -2047,3 +2047,66 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this final-mode commit-boundary correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
 - Blocker: none established.
+
+### 2026-09-01 21:41 JST — WB-006 completed task-queue GUI enhancement locally
+
+**Starting state and diagnosis**
+
+- Work continued in isolated `/tmp/workbench-wb-006` on `codex/wb-006-task-queue-gui`; the primary checkout's unstaged task record, runtime `.workbench/` metadata, and screenshot remained untouched.
+- The task composer accepted browser paste only when the dedicated image drop zone owned focus. Under WSLg, a copied Windows image can also arrive without a usable renderer `ClipboardEvent` file item. Optional fields were permanently expanded, while state appeared only as small metadata and the initial three-control quick-row layout left the desktop title field approximately 86 px wide.
+
+**Implementation**
+
+- Browser clipboard items are normalized to PNG/JPEG/WebP and accepted from anywhere inside the composer while ordinary text paste remains native in editable controls. A no-argument preload method asks the main process for a supported native clipboard image when renderer clipboard items are unavailable; the IPC handler accepts only the known Workbench main frame, validates size before reading bytes, and reuses main-process structural image validation.
+- The always-visible composer now provides a full-width title plus readable priority and Add controls. Parent, objective, criteria, and image controls use a remembered Details disclosure that auto-opens for existing optional draft data, pasted images, or Add-subtask actions.
+- Queue summary counts open/done work. Pending, in-progress, blocked, and done rows receive explicit icon/text chips and distinct row-edge presentation while retaining priority, nesting, and existing actions.
+- Image additions retain the workspace that initiated the asynchronous read, merge against that workspace's latest draft, reject over-count selections before loading file bytes, and repaint only when that workspace remains active. Focused helpers cover media normalization, browser clipboard file selection, state presentation, queue summary, limits, and out-of-order image batches.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/clipboard-image.test.js dist-test/tests/project-tasks.test.js` | Native clipboard selection/validation, pre-read oversized rejection, browser clipboard selection, state mapping/summary, tree behavior, and asynchronous merge regressions passed; exit `0`. |
+| passed | `npm run check` | Strict main/renderer type checks and all 15 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed after the final quick-row correction; exit `0`. |
+| passed | production WSLg renderer journey at 1520×960 | Title width was 256 px, priority text was fully visible at 112 px, Details began closed and toggled open, all five rows had explicit state chips, queue summary reported `2 open · 3 done`, and no error toast or horizontal overflow appeared. |
+| passed | synthetic browser clipboard journey through the production renderer | Dispatching a real PNG `File` paste while the title input had focus prevented default text insertion, auto-opened Details, created one `smoke.png` 1 KB preview, and removal returned the preview count to zero with no error toast. |
+| passed | production renderer at 720×520 | The title remained 440 px wide, quick controls stayed visible, and neither the document nor main content overflowed horizontally. |
+| passed | scoped WSLg launch and shutdown | Workbench opened as the expected 1528×964 host window; after intentional SIGINT, the X window tree contained no Workbench/Electron window. Known DBus/GPU warnings remained non-fatal. |
+| unavailable | physical Windows Snipping Tool clipboard injection | The live clipboard was not overwritten. Renderer file-item paste and main native-clipboard conversion are covered independently, including malformed/oversized failure paths. |
+| passed | `git diff --check` and task-path review | No whitespace errors; the diff is limited to WB-006 task records, clipboard bridge/helper, composer/queue rendering and styles, API typing/mock, and focused tests. |
+
+**Next action**
+
+- Verify the conflict-resolved WB-006 composition against corrected P0-002, preserving final image/field submission cleanup, linear rendering, VP8 validation, and task-offer ambiguity guards. Publish only after PR #5 is separately merged and a fresh branch is based on updated `origin/main`.
+- Blocker: none established.
+
+### 2026-09-01 22:15 JST — WB-006 verified against corrected P0-002
+
+**Integration and conflict resolution**
+
+- Created local-only `/tmp/workbench-wb-006-integration` and `codex/wb-006-task-queue-gui-integration` directly from P0-002 exact head `76d8649`, then cherry-picked audited WB-006 carrier `3e76e23` without publishing it.
+- Five expected conflicts covered changelog/progress records, renderer task composition, shared task helpers, and focused tests. Resolution retained P0's memoized tree validation, explicit-stack rendering, submitted-field/image preservation, VP8 hardening, and offer-action ambiguity checks while adding WB-006 clipboard ingestion, progressive disclosure, state presentation, and workspace-bound asynchronous reads.
+- Successful task cleanup now closes Details only when neither a newer field draft nor newer image remains. State-enhanced rows render through the P0 explicit stack, and Send actions use P0's `canOfferProjectTask` guard plus handler revalidation.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| setup recovered | `npm ci` then focused command | The first install invocation was interrupted before npm linked `tsc`; the focused command accurately failed with exit `127`. A fresh locked `npm ci` completed 286 packages in 1 minute without package/lock changes. |
+| diagnosis corrected | first post-install focused compile | TypeScript reported duplicate `mergeProjectTaskImages` declarations left by the merge (`TS2323`/`TS2393`); removing the duplicate implementation resolved the integration artifact. |
+| passed | `npm run build:tests && node --test dist-test/tests/clipboard-image.test.js dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | All three combined focused files passed; exit `0`. |
+| passed | `npm run typecheck` | Strict main and renderer checks passed after conflict resolution; exit `0`. |
+| passed | `npm run check:portable` | All 14 portable compiled test files passed; exit `0`. |
+| passed | `npm run check` | All 15 full compiled files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | combined production WSLg WB-006 journey | At 1520×960 and emulated 720×520, title/priority/Add stayed visible without horizontal overflow; Details toggled; five rows had explicit states; summary reported `2 open · 3 done`; title-focused PNG paste created and removed one preview without errors. |
+| passed | combined production WSLg P0 tree journey | Five task rows mapped to five semantic nodes with one expected nested list, maximum depth one, zero malformed direct row structures, no horizontal overflow, and no error toast. |
+| passed | `git diff --cached --check` and 14-path audit | The staged integration remains limited to WB-006 records, clipboard bridge/helper, task composition/presentation, API typing/mock, and focused tests. |
+
+**Next action**
+
+- Finish the local cherry-pick without pushing. Once PR #5 is separately merged, create a fresh delivery branch from fetched `origin/main`, transfer this verified WB-006 integration commit, rerun exact-head checks, and complete its CI/review loop.
+- Blocker: PR #5 merge remains a separate user-authorized action; no local implementation blocker is established.

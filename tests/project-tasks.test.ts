@@ -4,12 +4,15 @@ import type { ProjectTask } from '../src/shared/types';
 import {
   buildProjectTaskTree,
   canOfferProjectTask,
+  clipboardTaskImages,
   findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
   normalizeProjectTaskParentId,
   projectTaskDraftMatches,
+  projectTaskStatePresentation,
   removeSubmittedProjectTaskImages,
+  summarizeProjectTaskQueue,
 } from '../src/renderer/project-tasks';
 
 function task(id: string, parentId: string | null = null): ProjectTask {
@@ -87,6 +90,33 @@ test('resolves and flattens deep parent chains with linear parent reads', () => 
   assert.ok(parentReads <= tasks.length * 3, `Expected linear parent reads, received ${parentReads}.`);
 });
 
+test('summarizes open and done work and presents every state explicitly', () => {
+  const tasks = [task('WB-001'), task('WB-002'), task('WB-003'), task('WB-004')];
+  tasks[0]!.state = 'pending';
+  tasks[1]!.state = 'in progress';
+  tasks[2]!.state = 'blocked';
+  tasks[3]!.state = 'done';
+  assert.deepEqual(summarizeProjectTaskQueue(tasks), { open: 3, done: 1 });
+  assert.deepEqual(tasks.map((candidate) => projectTaskStatePresentation(candidate.state).label), [
+    'Pending', 'In progress', 'Blocked', 'Done',
+  ]);
+  assert.deepEqual(tasks.map((candidate) => projectTaskStatePresentation(candidate.state).className), [
+    'state-pending', 'state-in-progress', 'state-blocked', 'state-done',
+  ]);
+});
+
+test('selects supported clipboard files without claiming ordinary text paste', () => {
+  const png = { type: '' };
+  const ignored = { type: 'text/plain' };
+  const selected = clipboardTaskImages([
+    { kind: 'string', type: 'text/plain', getAsFile: () => ignored },
+    { kind: 'file', type: 'image/png', getAsFile: () => png },
+    { kind: 'file', type: 'image/gif', getAsFile: () => ignored },
+    { kind: 'file', type: 'image/jpeg', getAsFile: () => null },
+  ]);
+  assert.deepEqual(selected, [{ file: png, mediaType: 'image/png' }]);
+});
+
 test('merges overlapping image reads against the latest task draft', async () => {
   interface Image { id: string; bytes: Uint8Array }
   let images: Image[] = [];
@@ -139,4 +169,16 @@ test('normalizes a stale composer parent before submission comparison', () => {
   };
   draft.parentId = normalizeProjectTaskParentId(draft.parentId, validParentIds);
   assert.equal(projectTaskDraftMatches(draft, { ...draft, parentId: '' }), true);
+});
+
+test('enforces task image count and aggregate byte limits while merging', () => {
+  const image = (size: number) => ({ bytes: new Uint8Array(size) });
+  assert.throws(
+    () => mergeProjectTaskImages([image(1), image(1), image(1), image(1)], [image(1)]),
+    /no more than 4/,
+  );
+  assert.throws(
+    () => mergeProjectTaskImages([image(5 * 1024 * 1024), image(5 * 1024 * 1024)], [image(3 * 1024 * 1024)]),
+    /total 12 MB or less/,
+  );
 });

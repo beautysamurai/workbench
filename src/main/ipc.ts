@@ -21,6 +21,7 @@ import type {
   WorkspaceDraft,
 } from '../shared/types';
 import { CodexAppServerManager } from './codex-app-server';
+import { taskImageFromClipboardItems } from './clipboard-image';
 import { CODEX_THREAD_SANDBOX_MODE, toCodexApprovalPolicy } from './codex-protocol';
 import { codexThreadModelOverrides, codexThreadStartModelOverrides } from './codex-session';
 import { buildContextPack, suggestedContextFileName } from './context-service';
@@ -58,6 +59,7 @@ function removeAllWorkbenchHandlers(): void {
     'project:inspect',
     'project:initialize',
     'project:add-task',
+    'project:read-clipboard-image',
     'system:inspect',
     'system:git-status',
     'system:open-intellij',
@@ -106,6 +108,12 @@ export function registerIpc({ window, store, codex, terminals }: IpcDependencies
   ipcMain.handle('project:initialize', (_event, workspaceId: string) => initializeProjectSystem(workspace(workspaceId)));
   ipcMain.handle('project:add-task', (_event, workspaceId: string, task: ProjectTaskDraft) =>
     addProjectTask(workspace(workspaceId), task));
+  ipcMain.handle('project:read-clipboard-image', async (event) => {
+    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
+      throw new Error('Clipboard access is only available to the Workbench main frame.');
+    }
+    return taskImageFromClipboardItems(await clipboard.read());
+  });
   ipcMain.handle(
     'state:remove-context-item',
     (_event, workspaceId: string, itemId: string) =>

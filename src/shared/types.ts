@@ -259,6 +259,7 @@ export interface WorkbenchApi {
     inspect(workspaceId: string): Promise<ProjectSystemStatus>;
     initialize(workspaceId: string): Promise<ProjectSystemStatus>;
     addTask(workspaceId: string, task: ProjectTaskDraft): Promise<ProjectSystemStatus>;
+    readClipboardImage(): Promise<ProjectTaskImageDraft | null>;
   };
   system: {
     inspect(): Promise<SystemInspection>;

@@ -12,11 +12,13 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Added remaining primary Codex usage and reset-time indicators to the dashboard and Codex toolbar.
 - Added a Markdown-backed project task queue with safe default setup, GUI task entry, and a Send to Codex action.
 - Added explicit task priorities, optional parent/child structure and acceptance criteria, plus pasted, dropped, or selected reference images with previews.
+- Added a main-frame-only native clipboard fallback for task images when WSLg does not expose a browser clipboard file item.
 
 ### Changed
 
 - Model and reasoning-effort choices now belong to each Codex thread instead of the whole workspace.
 - New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while arbitrary existing non-placeholder heading IDs—including named, priority-prefixed, old generated, and UUID forms—remain visible and can parent new nested tasks when unambiguous.
+- The task composer keeps title, priority, and Add controls visible while parent, objective, criteria, and image controls live under remembered Details; task rows now show explicit state chips and an open/done summary.
 
 ### Fixed
 
@@ -31,6 +33,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Large, highly compressible PNG and lossless WebP task images now decode in a bounded worker instead of pausing the Electron main thread.
 - A task is now reported as added once its Markdown append commits, so a transient follow-up refresh failure cannot leave a stale draft that creates a duplicate on retry.
 - Duplicate, misplaced, or lossless-only WebP ALPH chunks are rejected even when the underlying decoder tolerates them.
+- Task images can now be pasted from anywhere in the composer without intercepting ordinary text paste, and overlapping asynchronous image reads no longer replace one another.
 
 ### Security
 

@@ -41,13 +41,18 @@ import { createMockApi } from './mock-api.js';
 import {
   buildProjectTaskTree,
   canOfferProjectTask,
+  clipboardTaskImages,
   findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
   normalizeProjectTaskParentId,
   projectTaskDraftMatches,
+  projectTaskStatePresentation,
   removeSubmittedProjectTaskImages,
+  supportedTaskImageMediaType,
+  summarizeProjectTaskQueue,
   type ProjectTaskTreeNode,
+  type SupportedTaskImageMediaType,
 } from './project-tasks.js';
 import { TerminalBuffer } from './terminal-buffer.js';
 
@@ -134,6 +139,7 @@ interface UiState {
   projectLoading: Set<string>;
   projectTaskDrafts: Map<string, ProjectTaskComposerDraft>;
   projectTaskImages: Map<string, PendingProjectTaskImage[]>;
+  projectTaskDetailsOpen: Map<string, boolean>;
   threadLists: Map<string, CodexThreadSummary[]>;
   threadsLoading: Set<string>;
   activeThread: Map<string, string>;
@@ -177,6 +183,7 @@ const ui: UiState = {
   projectLoading: new Set(),
   projectTaskDrafts: new Map(),
   projectTaskImages: new Map(),
+  projectTaskDetailsOpen: new Map(),
   threadLists: new Map(),
   threadsLoading: new Set(),
   activeThread: new Map(),
@@ -505,12 +512,17 @@ function renderProjectPanel(workspace: Workspace): string {
     </span>`).join('') ?? '';
   const tasks = status?.tasks ?? [];
   const taskTree = buildProjectTaskTree(tasks);
+  const taskSummary = summarizeProjectTaskQueue(tasks);
   const taskRows = tasks.length
     ? taskTree.map(renderProjectTaskNode).join('')
     : `<li class="empty-inline">No queued tasks yet. Add one here instead of editing TASKS.md.</li>`;
   const unsafeFile = status?.files.find((file) => file.exists && !file.safe);
   const draft = projectTaskComposerDraft(workspace.id);
   const pendingImages = ui.projectTaskImages.get(workspace.id) ?? [];
+  const hasDetailDraft = Boolean(draft.parentId || draft.objective.trim() || draft.acceptanceCriteria.trim() || pendingImages.length);
+  const detailsOpen = ui.projectTaskDetailsOpen.has(workspace.id)
+    ? ui.projectTaskDetailsOpen.get(workspace.id) === true
+    : hasDetailDraft;
   const priorityOptions = ([
     ['P0', 'Critical'], ['P1', 'High'], ['P2', 'Normal'], ['P3', 'Low'],
   ] satisfies [ProjectTaskPriority, string][]).map(([priority, label]) =>
@@ -533,25 +545,38 @@ function renderProjectPanel(workspace: Workspace): string {
       <div class="project-task-layout">
         <form class="task-compose" id="project-task-form">
           <div class="task-compose-heading"><label for="project-task-title">Add a task</label><span>ID assigned automatically · ${escapeHtml(status?.nextTaskId ?? 'WB-001')}</span></div>
-          <input id="project-task-title" name="title" required maxlength="180" value="${escapeHtml(draft.title)}" placeholder="What should Codex accomplish?" />
-          <div class="task-field-grid">
-            <label for="project-task-priority"><span>Priority</span><select id="project-task-priority" name="priority" required>
+          <div class="task-quick-input">
+            <input id="project-task-title" name="title" required maxlength="180" value="${escapeHtml(draft.title)}" placeholder="What should Codex accomplish?" />
+            <label class="task-quick-priority" for="project-task-priority"><span>Priority</span><select id="project-task-priority" name="priority" required>
               ${priorityOptions}
             </select></label>
-            <label for="project-task-parent"><span>Parent task</span><select id="project-task-parent" name="parentId"><option value="" ${draft.parentId ? '' : 'selected'}>None · top level</option>${parentOptions}</select></label>
+            <button class="button small primary" type="submit" ${loading || Boolean(unsafeFile) ? 'disabled' : ''}>${icon('plus', 12)} Add</button>
           </div>
-          <label class="task-text-field" for="project-task-objective"><span>Objective</span><textarea id="project-task-objective" name="objective" maxlength="500" placeholder="Optional implementation detail or outcome">${escapeHtml(draft.objective)}</textarea></label>
-          <label class="task-text-field" for="project-task-criteria"><span>Acceptance criteria</span><textarea id="project-task-criteria" name="acceptanceCriteria" maxlength="1500" placeholder="One observable condition per line">${escapeHtml(draft.acceptanceCriteria)}</textarea></label>
-          <div class="task-image-dropzone" data-task-image-dropzone="true" tabindex="0" role="group" aria-label="Paste or choose task images">
-            <input id="project-task-images" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
-            <span class="task-image-dropzone-icon">${icon('image', 17)}</span>
-            <span><strong>Paste task images here</strong><small>Focus and press Ctrl+V, drop files, or choose up to 4 PNG, JPEG, or WebP images.</small></span>
-            <button class="button small ghost" type="button" data-action="choose-task-images">Choose images</button>
-          </div>
-          <div class="task-image-previews" id="task-image-previews">${imagePreviews}</div>
-          <button class="button small primary" type="submit" ${loading || Boolean(unsafeFile) ? 'disabled' : ''}>${icon('plus', 12)} Add to queue</button>
+          <details class="task-compose-details" id="project-task-details" ${detailsOpen ? 'open' : ''}>
+            <summary><span>Details &amp; attachments</span><small>Parent, objective, criteria, images</small></summary>
+            <div class="task-compose-detail-body">
+              <div class="task-field-grid">
+                <label for="project-task-parent"><span>Parent task</span><select id="project-task-parent" name="parentId"><option value="" ${draft.parentId ? '' : 'selected'}>None · top level</option>${parentOptions}</select></label>
+              </div>
+              <label class="task-text-field" for="project-task-objective"><span>Objective</span><textarea id="project-task-objective" name="objective" maxlength="500" placeholder="Optional implementation detail or outcome">${escapeHtml(draft.objective)}</textarea></label>
+              <label class="task-text-field" for="project-task-criteria"><span>Acceptance criteria</span><textarea id="project-task-criteria" name="acceptanceCriteria" maxlength="1500" placeholder="One observable condition per line">${escapeHtml(draft.acceptanceCriteria)}</textarea></label>
+              <div class="task-image-dropzone" data-task-image-dropzone="true" tabindex="0" role="group" aria-label="Paste or choose task images">
+                <input id="project-task-images" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
+                <span class="task-image-dropzone-icon">${icon('image', 17)}</span>
+                <span><strong>Paste an image anywhere in this form</strong><small>Press Ctrl+V, drop files here, or choose up to 4 PNG, JPEG, or WebP images.</small></span>
+                <span class="task-image-actions">
+                  <button class="button small ghost" type="button" data-action="paste-task-image">Paste image</button>
+                  <button class="button small ghost" type="button" data-action="choose-task-images">Choose files</button>
+                </span>
+              </div>
+              <div class="task-image-previews" id="task-image-previews">${imagePreviews}</div>
+            </div>
+          </details>
         </form>
-        <div class="project-task-list"><ol class="project-task-tree">${taskRows}</ol></div>
+        <div class="project-task-list">
+          <div class="task-queue-summary"><span><strong>${taskSummary.open} open</strong><i aria-hidden="true">·</i>${taskSummary.done} done</span><small>Status is shown on every task.</small></div>
+          <ol class="project-task-tree">${taskRows}</ol>
+        </div>
       </div>
     </section>`;
 }
@@ -586,15 +611,24 @@ function renderProjectTaskNode(root: ProjectTaskTreeNode): string {
     }
     const { node } = frame;
     const task = node.task;
-    const prompt = task.objective || task.title;
+    const state = projectTaskStatePresentation(task.state);
+    const objective = task.objective.trim();
+    const showObjective = objective && objective.toLowerCase() !== task.title.trim().toLowerCase();
+    const metadata = [
+      task.acceptanceCriteria.length ? `${task.acceptanceCriteria.length} criteria` : '',
+      task.attachments.length ? `${task.attachments.length} image${task.attachments.length === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(' · ');
     chunks.push(`
       <li class="project-task-node">
-        <article class="project-task-row">
-          <span class="task-priority priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span>
+        <article class="project-task-row ${state.className}" data-task-state="${escapeHtml(task.state)}" aria-label="${escapeHtml(`${task.id} ${task.title}, ${state.label}`)}">
+          <span class="project-task-status">
+            <span class="task-state ${state.className}">${icon(state.iconName, 10)} ${escapeHtml(state.label)}</span>
+            <span class="task-priority priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span>
+          </span>
           <span class="project-task-copy">
             <strong>${escapeHtml(task.title)}</strong>
-            <small>${escapeHtml(task.id)} · ${escapeHtml(task.state)}${task.acceptanceCriteria.length ? ` · ${task.acceptanceCriteria.length} criteria` : ''}${task.attachments.length ? ` · ${task.attachments.length} image${task.attachments.length === 1 ? '' : 's'}` : ''}</small>
-            <small>${escapeHtml(prompt)}</small>
+            <small class="project-task-meta">${escapeHtml(task.id)}${metadata ? ` · ${escapeHtml(metadata)}` : ''}</small>
+            ${showObjective ? `<small class="project-task-objective">${escapeHtml(objective)}</small>` : ''}
             ${node.issue ? `<em>${icon('alert', 10)} ${escapeHtml(node.issue)}</em>` : ''}
           </span>
           <span class="project-task-actions">
@@ -1303,7 +1337,8 @@ async function submitProjectTask(): Promise<void> {
     const created = ui.projectSystems.get(workspace.id)?.tasks.find((task) => !previousTaskIds.has(task.id));
     createdId = created?.id ?? createdId;
     const currentDraft = ui.projectTaskDrafts.get(workspace.id);
-    if (!currentDraft || projectTaskDraftMatches(currentDraft, submittedDraft)) {
+    const retainedDraft = Boolean(currentDraft && !projectTaskDraftMatches(currentDraft, submittedDraft));
+    if (!retainedDraft) {
       ui.projectTaskDrafts.delete(workspace.id);
     }
     const remainingImages = removeSubmittedProjectTaskImages(
@@ -1312,6 +1347,7 @@ async function submitProjectTask(): Promise<void> {
     );
     if (remainingImages.length) ui.projectTaskImages.set(workspace.id, remainingImages);
     else ui.projectTaskImages.delete(workspace.id);
+    if (!retainedDraft && !remainingImages.length) ui.projectTaskDetailsOpen.delete(workspace.id);
     succeeded = true;
   } catch (error) {
     toast(errorMessage(error), 'error');
@@ -1325,47 +1361,97 @@ async function submitProjectTask(): Promise<void> {
   }
 }
 
-function filePreviewUrl(file: File): Promise<string> {
+function imagePreviewUrl(image: ProjectTaskImageDraft): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener('load', () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Image preview failed.')));
     reader.addEventListener('error', () => reject(reader.error ?? new Error('Image preview failed.')));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(new Blob([Uint8Array.from(image.bytes)], { type: image.mediaType }));
   });
 }
 
-async function addProjectTaskImages(files: File[]): Promise<void> {
-  const workspace = currentWorkspace();
-  if (!workspace || !files.length) return;
-  const existing = ui.projectTaskImages.get(workspace.id) ?? [];
-  if (existing.length + files.length > 4) {
+async function addProjectTaskImageDrafts(
+  workspaceId: string,
+  images: ProjectTaskImageDraft[],
+): Promise<boolean> {
+  if (!images.length || !ui.data?.workspaces.some((workspace) => workspace.id === workspaceId)) return false;
+  const existing = ui.projectTaskImages.get(workspaceId) ?? [];
+  if (existing.length + images.length > 4) {
     toast('Attach no more than 4 task images.', 'error');
-    return;
+    return false;
   }
-  const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
   const accepted: PendingProjectTaskImage[] = [];
   try {
-    for (const file of files) {
-      if (!allowed.has(file.type)) throw new Error('Task images must be PNG, JPEG, or WebP files.');
-      if (!file.size) throw new Error('The pasted image is empty.');
-      if (file.size > 5 * 1024 * 1024) throw new Error('Each task image must be 5 MB or smaller.');
+    for (const image of images) {
+      const mediaType = supportedTaskImageMediaType(image.mediaType);
+      if (!mediaType) throw new Error('Task images must be PNG, JPEG, or WebP files.');
+      if (!image.bytes.byteLength) throw new Error('The pasted image is empty.');
+      if (image.bytes.byteLength > 5 * 1024 * 1024) throw new Error('Each task image must be 5 MB or smaller.');
       accepted.push({
-        name: file.name || `Pasted image ${existing.length + accepted.length + 1}`,
-        mediaType: file.type,
-        bytes: new Uint8Array(await file.arrayBuffer()),
-        previewUrl: await filePreviewUrl(file),
+        name: image.name || `Pasted image ${existing.length + accepted.length + 1}`,
+        mediaType,
+        bytes: Uint8Array.from(image.bytes),
+        previewUrl: await imagePreviewUrl({ ...image, mediaType }),
       });
     }
-    const latest = ui.projectTaskImages.get(workspace.id) ?? [];
+    if (!ui.data?.workspaces.some((workspace) => workspace.id === workspaceId)) return false;
+    const latest = ui.projectTaskImages.get(workspaceId) ?? [];
     const combined = mergeProjectTaskImages(latest, accepted);
-    ui.projectTaskImages.set(workspace.id, combined);
-    if (currentWorkspace()?.id === workspace.id) {
+    ui.projectTaskImages.set(workspaceId, combined);
+    ui.projectTaskDetailsOpen.set(workspaceId, true);
+    if (currentWorkspace()?.id === workspaceId) {
+      const details = document.querySelector<HTMLDetailsElement>('#project-task-details');
+      if (details) details.open = true;
       const previews = document.querySelector<HTMLElement>('#task-image-previews');
       if (previews) previews.innerHTML = renderPendingProjectTaskImages(combined);
     }
     toast(`${accepted.length} image${accepted.length === 1 ? '' : 's'} attached.`);
+    return true;
   } catch (error) {
     toast(errorMessage(error), 'error');
+    return false;
+  }
+}
+
+async function addProjectTaskImageFiles(
+  images: Array<{ file: File; mediaType?: SupportedTaskImageMediaType }>,
+): Promise<boolean> {
+  const workspaceId = currentWorkspace()?.id;
+  if (!workspaceId || !images.length) return false;
+  try {
+    if ((ui.projectTaskImages.get(workspaceId)?.length ?? 0) + images.length > 4) {
+      throw new Error('Attach no more than 4 task images.');
+    }
+    return addProjectTaskImageDrafts(workspaceId, await Promise.all(images.map(async ({ file, mediaType }) => {
+      const normalizedMediaType = supportedTaskImageMediaType(mediaType ?? file.type);
+      if (!normalizedMediaType) throw new Error('Task images must be PNG, JPEG, or WebP files.');
+      if (!file.size) throw new Error('The pasted image is empty.');
+      if (file.size > 5 * 1024 * 1024) throw new Error('Each task image must be 5 MB or smaller.');
+      return {
+        name: file.name,
+        mediaType: normalizedMediaType,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      };
+    })));
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+    return false;
+  }
+}
+
+async function pasteProjectTaskImageFromNativeClipboard(showEmptyMessage: boolean): Promise<boolean> {
+  const workspaceId = currentWorkspace()?.id;
+  if (!workspaceId) return false;
+  try {
+    const image = await api.project.readClipboardImage();
+    if (!image) {
+      if (showEmptyMessage) toast('The clipboard does not contain a PNG, JPEG, or WebP image.', 'error');
+      return false;
+    }
+    return addProjectTaskImageDrafts(workspaceId, [image]);
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+    return false;
   }
 }
 
@@ -1381,7 +1467,12 @@ function removeProjectTaskImage(workspace: Workspace, index: number): void {
 
 function chooseProjectSubtask(taskId: string): void {
   const workspace = currentWorkspace();
-  if (workspace) projectTaskComposerDraft(workspace.id).parentId = taskId;
+  if (workspace) {
+    projectTaskComposerDraft(workspace.id).parentId = taskId;
+    ui.projectTaskDetailsOpen.set(workspace.id, true);
+  }
+  const details = document.querySelector<HTMLDetailsElement>('#project-task-details');
+  if (details) details.open = true;
   const parent = document.querySelector<HTMLSelectElement>('#project-task-form select[name="parentId"]');
   if (parent) parent.value = taskId;
   document.querySelector<HTMLInputElement>('#project-task-title')?.focus();
@@ -1809,7 +1900,7 @@ document.addEventListener('input', (event) => {
 document.addEventListener('change', (event) => {
   const target = event.target;
   if (target instanceof HTMLInputElement && target.id === 'project-task-images') {
-    void addProjectTaskImages(Array.from(target.files ?? []));
+    void addProjectTaskImageFiles(Array.from(target.files ?? []).map((file) => ({ file })));
     target.value = '';
     return;
   }
@@ -1823,18 +1914,32 @@ document.addEventListener('change', (event) => {
 
 document.addEventListener('paste', (event) => {
   const target = event.target;
-  if (!(target instanceof HTMLElement) || !target.closest('[data-task-image-dropzone]')) return;
-  const files = Array.from(event.clipboardData?.items ?? [])
-    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => file !== null);
-  if (!files.length) {
-    toast('The clipboard does not contain a supported image.', 'error');
+  if (!(target instanceof HTMLElement) || !target.closest('#project-task-form')) return;
+  const images = clipboardTaskImages(Array.from(event.clipboardData?.items ?? []));
+  if (images.length) {
+    event.preventDefault();
+    void addProjectTaskImageFiles(images);
     return;
   }
+  const clipboardTypes = Array.from(event.clipboardData?.types ?? []);
+  const normalizedClipboardTypes = clipboardTypes.map((type) => type.toLowerCase());
+  const hasAdvertisedImage = normalizedClipboardTypes.some((type) => type.startsWith('image/'));
+  const hasPlainText = normalizedClipboardTypes.includes('text/plain');
+  const editableTarget = target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target.isContentEditable;
+  if (!hasAdvertisedImage && hasPlainText && editableTarget) return;
   event.preventDefault();
-  void addProjectTaskImages(files);
+  void pasteProjectTaskImageFromNativeClipboard(Boolean(target.closest('[data-task-image-dropzone]')));
 });
+
+document.addEventListener('toggle', (event) => {
+  const target = event.target;
+  const workspace = currentWorkspace();
+  if (workspace && target instanceof HTMLDetailsElement && target.id === 'project-task-details') {
+    ui.projectTaskDetailsOpen.set(workspace.id, target.open);
+  }
+}, true);
 
 appElement.addEventListener('dragover', (event) => {
   const target = event.target;
@@ -1845,7 +1950,7 @@ appElement.addEventListener('drop', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement) || !target.closest('[data-task-image-dropzone]')) return;
   event.preventDefault();
-  void addProjectTaskImages(Array.from(event.dataTransfer?.files ?? []));
+  void addProjectTaskImageFiles(Array.from(event.dataTransfer?.files ?? []).map((file) => ({ file })));
 });
 
 document.addEventListener('submit', (event) => {
@@ -1980,6 +2085,9 @@ async function executeAction(actionName: string, element: HTMLElement): Promise<
       break;
     case 'choose-task-images':
       document.querySelector<HTMLInputElement>('#project-task-images')?.click();
+      break;
+    case 'paste-task-image':
+      await pasteProjectTaskImageFromNativeClipboard(true);
       break;
     case 'remove-task-image':
       if (workspace) removeProjectTaskImage(workspace, Number(element.dataset.imageIndex));
@@ -2335,6 +2443,7 @@ async function deleteWorkspace(workspaceId: string): Promise<void> {
     }
     ui.projectTaskDrafts.delete(workspaceId);
     ui.projectTaskImages.delete(workspaceId);
+    ui.projectTaskDetailsOpen.delete(workspaceId);
     ui.threadLists.delete(workspaceId);
     ui.activeThread.delete(workspaceId);
     ui.codexPreferences.deleteWorkspace(workspaceId);
