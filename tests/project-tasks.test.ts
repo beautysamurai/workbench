@@ -3,6 +3,8 @@ import test from 'node:test';
 import type { ProjectTask } from '../src/shared/types';
 import {
   buildProjectTaskTree,
+  canOfferProjectTask,
+  findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
   projectTaskDraftMatches,
@@ -34,6 +36,25 @@ test('keeps orphaned, duplicate, and cyclic tasks visible with structural warnin
   assert.match(tree[1]?.issue ?? '', /cycle/);
   assert.match(tree[2]?.issue ?? '', /cycle/);
   assert.match(tree[3]?.issue ?? '', /Duplicate/);
+  assert.equal(tree[3]?.isTaskIdUnique, false);
+  assert.equal(tree[4]?.isTaskIdUnique, false);
+  assert.equal(canOfferProjectTask(tree[3]!), false);
+  assert.equal(canOfferProjectTask(tree[4]!), false);
+  assert.equal(canOfferProjectTask(tree[0]!), false);
+  assert.equal(findOfferableProjectTask(tree.map((node) => node.task), 'WB-004'), null);
+});
+
+test('does not offer completed tasks to Codex', () => {
+  const completed = task('WB-001');
+  completed.state = 'done';
+  assert.equal(canOfferProjectTask(buildProjectTaskTree([completed])[0]!), false);
+  assert.equal(findOfferableProjectTask([completed], completed.id), null);
+});
+
+test('resolves only structurally valid tasks through offer actions', () => {
+  const valid = task('WB-001');
+  assert.equal(findOfferableProjectTask([valid], valid.id), valid);
+  assert.equal(findOfferableProjectTask([valid], 'WB-404'), null);
 });
 
 test('marks descendants of an invalid parent chain as invalid too', () => {

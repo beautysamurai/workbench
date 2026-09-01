@@ -428,6 +428,14 @@ function isStructuredJpeg(bytes: Uint8Array): boolean {
 
 function isStructuredVp8Payload(bytes: Uint8Array, start: number, length: number): boolean {
   if (length <= 10 || !startsWithBytes(bytes, [0x9d, 0x01, 0x2a], start + 3)) return false;
+  const frameTag = uint24LittleEndian(bytes, start);
+  const isKeyFrame = (frameTag & 0x01) === 0;
+  const version = (frameTag >>> 1) & 0x07;
+  const showFrame = ((frameTag >>> 4) & 0x01) === 1;
+  const firstPartitionLength = frameTag >>> 5;
+  const bytesAfterFrameHeader = length - 10;
+  if (!isKeyFrame || version > 3 || !showFrame
+    || firstPartitionLength === 0 || firstPartitionLength >= bytesAfterFrameHeader) return false;
   const width = ((bytes[start + 6] ?? 0) + ((bytes[start + 7] ?? 0) << 8)) & 0x3fff;
   const height = ((bytes[start + 8] ?? 0) + ((bytes[start + 9] ?? 0) << 8)) & 0x3fff;
   return validImageDimensions(width, height);

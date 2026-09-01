@@ -40,6 +40,8 @@ import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
 import {
   buildProjectTaskTree,
+  canOfferProjectTask,
+  findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
   projectTaskDraftMatches,
@@ -595,7 +597,7 @@ function renderProjectTaskNode(root: ProjectTaskTreeNode): string {
           </span>
           <span class="project-task-actions">
             ${node.issue ? '' : `<button class="button small ghost" data-action="add-project-subtask" data-task-id="${escapeHtml(task.id)}" aria-label="Add a subtask to ${escapeHtml(task.title)}">Add subtask</button>`}
-            ${task.state === 'done' ? '' : `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}" aria-label="Send ${escapeHtml(task.title)} to Codex">Send to Codex</button>`}
+            ${canOfferProjectTask(node) ? `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}" aria-label="Send ${escapeHtml(task.title)} to Codex">Send to Codex</button>` : ''}
           </span>
         </article>`);
     if (!node.children.length) {
@@ -1401,15 +1403,18 @@ async function saveCodexSetting(workspace: Workspace, setting: 'model' | 'effort
 }
 
 async function offerProjectTask(workspace: Workspace, taskId: string): Promise<void> {
-  const task = ui.projectSystems.get(workspace.id)?.tasks.find((candidate) => candidate.id === taskId);
-  if (!task) return;
+  const project = ui.projectSystems.get(workspace.id);
+  const task = findOfferableProjectTask(project?.tasks ?? [], taskId);
+  if (!task) {
+    toast('Resolve the task ID or parent-structure warning before sending this task.', 'error');
+    return;
+  }
   ui.activeTab = 'codex';
   renderAll();
   await Promise.all([ensureCodexMetadata(workspace), ensureThreads(workspace)]);
   if (!ui.activeThread.get(workspace.id)) await startNewThread(workspace);
   const threadId = ui.activeThread.get(workspace.id);
   if (!threadId) return;
-  const project = ui.projectSystems.get(workspace.id);
   const parent = task.parentId ? project?.tasks.find((candidate) => candidate.id === task.parentId) : null;
   const children = project?.tasks.filter((candidate) => candidate.parentId === task.id) ?? [];
   const details = [

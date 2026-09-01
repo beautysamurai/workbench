@@ -24,6 +24,19 @@ function tinyWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
 }
 
+function tinyLossyWebp(): Uint8Array {
+  // Official libwebp-test-data small_1x1.webp fixture.
+  return Uint8Array.from(Buffer.from('UklGRlYAAABXRUJQVlA4IDoAAADwAgCdASoBAAEAAEcIhYWIhYSIAgICdaoD+AP6Ag1NGAD+/vNYf/5gZt2KO//mBv/80F4SW6//zLwASUNNVAgAAAB0ZXN0MXgxAA==', 'base64'));
+}
+
+function lossyWebpWithFrameTag(frameTag: number): Uint8Array {
+  const bytes = tinyLossyWebp();
+  bytes[20] = frameTag & 0xff;
+  bytes[21] = (frameTag >>> 8) & 0xff;
+  bytes[22] = (frameTag >>> 16) & 0xff;
+  return bytes;
+}
+
 function extendedTinyWebp(): Uint8Array {
   const imageChunk = tinyWebp().slice(12);
   const bytes = Buffer.alloc(30 + imageChunk.length);
@@ -98,6 +111,7 @@ test('validates supported image bytes without filesystem access', () => {
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
   assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
+  assert.equal(validateProjectTaskImage({ bytes: tinyLossyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
 });
 
@@ -134,6 +148,12 @@ test('rejects malformed WebP chunks and oversized bytes before copying', () => {
   emptyVp8x.writeUInt32LE(0, 16);
   assert.throws(() => validateProjectTaskImage({ bytes: emptyVp8x }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: tinyWebp().slice(0, -1) }), /PNG, JPEG, or WebP/);
+  const validFrameTag = 0x02f0;
+  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x01) }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag | 0x08) }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(validFrameTag & ~0x10) }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag(0x10) }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: lossyWebpWithFrameTag((49 << 5) | 0x10) }), /PNG, JPEG, or WebP/);
 
   const oversized = new Uint8Array((5 * 1024 * 1024) + 1);
   Object.defineProperty(oversized, Symbol.iterator, {

@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 CI and automated review)
+- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 exact-head review correction)
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Complete PR #5 CI and automated review, then begin P0-004
+- **Next action:** Publish the accepted exact-head review corrections, then require fresh CI and automated re-review on PR #5
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -1215,4 +1215,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and push this fourth review correction, resolve the finding with exact-commit evidence, then require fresh CI and another exact-head automated review.
+- Blocker: none established.
+
+### 2026-09-01 21:57 JST — P0-002 accepted VP8-frame and duplicate-action review findings
+
+**Exact-head review evidence and reproduction**
+
+- Exact head `e847ae8` passed both workflow events: Linux verification completed in 17 and 18 seconds, and Windows portable/package jobs completed in 1 minute 47 seconds and 2 minutes 13 seconds.
+- Automated Codex review completed on `e847ae8` and opened two P2 findings: lossy WebP validation ignored the VP8 frame tag and its declared first-partition bounds, and duplicate task rows exposed Send actions that both resolved through `tasks.find(id)` to the first duplicate.
+- Both findings are accepted. A direct compiled reproducer changed the official libwebp 1×1 lossy fixture to declare a 49-byte first partition inside a 58-byte VP8 chunk; the pre-fix validator accepted it and exited `1`. A second reproducer clicked the conceptual second `WB-007` duplicate but demonstrated ID lookup resolving the first duplicate and exited `1`.
+
+**Scoped correction**
+
+- VP8 validation now parses the little-endian three-byte frame tag, requires a visible key frame with a defined profile, requires a non-empty first partition bounded after the ten-byte key-frame header, and leaves encoded token-partition data. The official 94-byte libwebp lossy fixture remains accepted; interframe, undefined-profile, invisible, empty-partition, and overlong-partition variants are rejected.
+- Task-tree nodes now carry an explicit ID-uniqueness property. Send to Codex remains available only for uniquely identified, structurally valid, non-completed tasks and is absent for both rows of a duplicate ID. The handler independently rebuilds and checks a current linear tree snapshot before starting Codex work, so a stale or synthetic action cannot fall back to the first duplicate.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | Both focused files passed the real lossy fixture, malformed frame-tag, duplicate-ID offer, completed-state, deep-tree, and prior image/draft regressions; exit `0`. |
+| passed | direct compiled overlong-partition reproducer | The previously accepted malformed fixture now throws the supported-image validation error; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `git diff --check` and scoped diff review | No whitespace errors; changes are limited to VP8 validation, task offer eligibility/rendering, focused tests, changelog, task evidence, and this append-only record. |
+
+**Next action**
+
+- Commit and push this fifth review correction, reply to and resolve both findings with exact-commit evidence, then require fresh push/pull-request CI and another exact-head automated review.
 - Blocker: none established.

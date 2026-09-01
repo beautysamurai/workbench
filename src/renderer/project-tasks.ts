@@ -7,6 +7,7 @@ export interface ProjectTaskTreeNode {
   task: ProjectTask;
   children: ProjectTaskTreeNode[];
   issue: string | null;
+  isTaskIdUnique: boolean;
 }
 
 function resolveStructuralIssues(
@@ -61,6 +62,7 @@ export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[
     task,
     children: [],
     issue: (counts.get(task.id) ?? 0) > 1 ? 'Duplicate task id' : issues.get(task.id) ?? null,
+    isTaskIdUnique: (counts.get(task.id) ?? 0) === 1,
   } satisfies ProjectTaskTreeNode));
   const uniqueNode = new Map<string, ProjectTaskTreeNode>();
   for (const node of nodes) {
@@ -74,6 +76,18 @@ export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[
     else roots.push(node);
   }
   return roots;
+}
+
+export function canOfferProjectTask(node: ProjectTaskTreeNode): boolean {
+  return node.isTaskIdUnique && node.issue === null && node.task.state !== 'done';
+}
+
+export function findOfferableProjectTask(tasks: ProjectTask[], taskId: string): ProjectTask | null {
+  const matches = flattenProjectTaskTree(buildProjectTaskTree(tasks))
+    .filter((node) => node.task.id === taskId);
+  return matches.length === 1 && matches[0] && canOfferProjectTask(matches[0])
+    ? matches[0].task
+    : null;
 }
 
 export function flattenProjectTaskTree(nodes: readonly ProjectTaskTreeNode[]): ProjectTaskTreeNode[] {
