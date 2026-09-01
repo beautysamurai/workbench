@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { ProjectTask } from '../src/shared/types';
 import {
   buildProjectTaskTree,
+  flattenProjectTaskTree,
   mergeProjectTaskImages,
   projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
@@ -42,6 +43,26 @@ test('marks descendants of an invalid parent chain as invalid too', () => {
   assert.equal(tree.length, 2);
   assert.match(tree[0]?.issue ?? '', /not found/);
   assert.match(tree[1]?.issue ?? '', /not found/);
+});
+
+test('resolves and flattens deep parent chains with linear parent reads', () => {
+  let parentReads = 0;
+  const tasks = Array.from({ length: 2_000 }, (_unused, index) => {
+    const parentId = index ? `WB-${String(index).padStart(4, '0')}` : null;
+    const candidate = task(`WB-${String(index + 1).padStart(4, '0')}`);
+    Object.defineProperty(candidate, 'parentId', {
+      enumerable: true,
+      get: () => {
+        parentReads += 1;
+        return parentId;
+      },
+    });
+    return candidate;
+  });
+  const flattened = flattenProjectTaskTree(buildProjectTaskTree(tasks));
+  assert.equal(flattened.length, tasks.length);
+  assert.equal(flattened.at(-1)?.task.id, 'WB-2000');
+  assert.ok(parentReads <= tasks.length * 3, `Expected linear parent reads, received ${parentReads}.`);
 });
 
 test('merges overlapping image reads against the latest task draft', async () => {

@@ -25,6 +25,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Fixed Codex thread creation, resume, and turn startup by sending approval and thread-sandbox settings in the app-server's required wire format.
 - Removed internal Codex reasoning-status rows from conversation logs while keeping user-facing progress and results visible.
 - Images and task-field edits made while a task submission is still completing now remain in the next draft instead of being cleared with the submitted values.
+- Deeply nested task queues now validate and render with linear, non-recursive traversal instead of repeatedly walking every ancestor chain.
 
 ### Security
 

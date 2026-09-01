@@ -40,6 +40,7 @@ import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
 import {
   buildProjectTaskTree,
+  flattenProjectTaskTree,
   mergeProjectTaskImages,
   projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
@@ -560,10 +561,6 @@ function projectTaskComposerDraft(workspaceId: string): ProjectTaskComposerDraft
   return draft;
 }
 
-function flattenProjectTaskTree(nodes: ProjectTaskTreeNode[]): ProjectTaskTreeNode[] {
-  return nodes.flatMap((node) => [node, ...flattenProjectTaskTree(node.children)]);
-}
-
 function renderPendingProjectTaskImages(images: PendingProjectTaskImage[]): string {
   return images.map((image, index) => `
     <span class="task-image-preview">
@@ -573,26 +570,46 @@ function renderPendingProjectTaskImages(images: PendingProjectTaskImage[]): stri
     </span>`).join('');
 }
 
-function renderProjectTaskNode(node: ProjectTaskTreeNode): string {
-  const task = node.task;
-  const prompt = task.objective || task.title;
-  return `
-    <li class="project-task-node">
-      <article class="project-task-row">
-        <span class="task-priority priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span>
-        <span class="project-task-copy">
-          <strong>${escapeHtml(task.title)}</strong>
-          <small>${escapeHtml(task.id)} · ${escapeHtml(task.state)}${task.acceptanceCriteria.length ? ` · ${task.acceptanceCriteria.length} criteria` : ''}${task.attachments.length ? ` · ${task.attachments.length} image${task.attachments.length === 1 ? '' : 's'}` : ''}</small>
-          <small>${escapeHtml(prompt)}</small>
-          ${node.issue ? `<em>${icon('alert', 10)} ${escapeHtml(node.issue)}</em>` : ''}
-        </span>
-        <span class="project-task-actions">
-          ${node.issue ? '' : `<button class="button small ghost" data-action="add-project-subtask" data-task-id="${escapeHtml(task.id)}" aria-label="Add a subtask to ${escapeHtml(task.title)}">Add subtask</button>`}
-          ${task.state === 'done' ? '' : `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}" aria-label="Send ${escapeHtml(task.title)} to Codex">Send to Codex</button>`}
-        </span>
-      </article>
-      ${node.children.length ? `<ol>${node.children.map(renderProjectTaskNode).join('')}</ol>` : ''}
-    </li>`;
+function renderProjectTaskNode(root: ProjectTaskTreeNode): string {
+  const chunks: string[] = [];
+  const stack: Array<{ node: ProjectTaskTreeNode; closing: boolean }> = [{ node: root, closing: false }];
+  while (stack.length) {
+    const frame = stack.pop();
+    if (!frame) continue;
+    if (frame.closing) {
+      chunks.push('</ol></li>');
+      continue;
+    }
+    const { node } = frame;
+    const task = node.task;
+    const prompt = task.objective || task.title;
+    chunks.push(`
+      <li class="project-task-node">
+        <article class="project-task-row">
+          <span class="task-priority priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span>
+          <span class="project-task-copy">
+            <strong>${escapeHtml(task.title)}</strong>
+            <small>${escapeHtml(task.id)} · ${escapeHtml(task.state)}${task.acceptanceCriteria.length ? ` · ${task.acceptanceCriteria.length} criteria` : ''}${task.attachments.length ? ` · ${task.attachments.length} image${task.attachments.length === 1 ? '' : 's'}` : ''}</small>
+            <small>${escapeHtml(prompt)}</small>
+            ${node.issue ? `<em>${icon('alert', 10)} ${escapeHtml(node.issue)}</em>` : ''}
+          </span>
+          <span class="project-task-actions">
+            ${node.issue ? '' : `<button class="button small ghost" data-action="add-project-subtask" data-task-id="${escapeHtml(task.id)}" aria-label="Add a subtask to ${escapeHtml(task.title)}">Add subtask</button>`}
+            ${task.state === 'done' ? '' : `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}" aria-label="Send ${escapeHtml(task.title)} to Codex">Send to Codex</button>`}
+          </span>
+        </article>`);
+    if (!node.children.length) {
+      chunks.push('</li>');
+      continue;
+    }
+    chunks.push('<ol>');
+    stack.push({ node, closing: true });
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      const child = node.children[index];
+      if (child) stack.push({ node: child, closing: false });
+    }
+  }
+  return chunks.join('');
 }
 
 function formatBytes(bytes: number): string {

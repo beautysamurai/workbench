@@ -9,22 +9,44 @@ export interface ProjectTaskTreeNode {
   issue: string | null;
 }
 
-function structuralIssue(
-  task: ProjectTask,
+function resolveStructuralIssues(
   counts: Map<string, number>,
   byId: Map<string, ProjectTask>,
-): string | null {
-  if ((counts.get(task.id) ?? 0) > 1) return 'Duplicate task id';
-  const seen = new Set([task.id]);
-  let parentId: string | null = task.parentId;
-  while (parentId) {
-    if (seen.has(parentId)) return 'Parent cycle detected';
-    if (!byId.has(parentId)) return `Parent ${parentId} was not found`;
-    if ((counts.get(parentId) ?? 0) > 1) return `Parent ${parentId} is ambiguous`;
-    seen.add(parentId);
-    parentId = byId.get(parentId)?.parentId ?? null;
+): Map<string, string | null> {
+  const resolved = new Map<string, string | null>();
+  for (const [taskId, count] of counts) {
+    if (count !== 1 || resolved.has(taskId)) continue;
+    const path: string[] = [];
+    const pathIds = new Set<string>();
+    let currentId = taskId;
+    let issue: string | null = null;
+    while (true) {
+      if (resolved.has(currentId)) {
+        issue = resolved.get(currentId) ?? null;
+        break;
+      }
+      if (pathIds.has(currentId)) {
+        issue = 'Parent cycle detected';
+        break;
+      }
+      pathIds.add(currentId);
+      path.push(currentId);
+      const parentId = byId.get(currentId)?.parentId ?? null;
+      if (!parentId) break;
+      const parentCount = counts.get(parentId) ?? 0;
+      if (parentCount === 0) {
+        issue = `Parent ${parentId} was not found`;
+        break;
+      }
+      if (parentCount > 1) {
+        issue = `Parent ${parentId} is ambiguous`;
+        break;
+      }
+      currentId = parentId;
+    }
+    for (const resolvedId of path) resolved.set(resolvedId, issue);
   }
-  return null;
+  return resolved;
 }
 
 export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[] {
@@ -34,10 +56,11 @@ export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[
     counts.set(task.id, (counts.get(task.id) ?? 0) + 1);
     if (!byId.has(task.id)) byId.set(task.id, task);
   }
+  const issues = resolveStructuralIssues(counts, byId);
   const nodes = tasks.map((task) => ({
     task,
     children: [],
-    issue: structuralIssue(task, counts, byId),
+    issue: (counts.get(task.id) ?? 0) > 1 ? 'Duplicate task id' : issues.get(task.id) ?? null,
   } satisfies ProjectTaskTreeNode));
   const uniqueNode = new Map<string, ProjectTaskTreeNode>();
   for (const node of nodes) {
@@ -45,11 +68,27 @@ export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[
   }
   const roots: ProjectTaskTreeNode[] = [];
   for (const node of nodes) {
-    const parent = node.issue || !node.task.parentId ? null : uniqueNode.get(node.task.parentId);
+    const parentId = node.task.parentId;
+    const parent = node.issue || !parentId ? null : uniqueNode.get(parentId);
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
   return roots;
+}
+
+export function flattenProjectTaskTree(nodes: readonly ProjectTaskTreeNode[]): ProjectTaskTreeNode[] {
+  const flattened: ProjectTaskTreeNode[] = [];
+  const stack = [...nodes].reverse();
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node) continue;
+    flattened.push(node);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      const child = node.children[index];
+      if (child) stack.push(child);
+    }
+  }
+  return flattened;
 }
 
 export function mergeProjectTaskImages<T extends Pick<ProjectTaskImageDraft, 'bytes'>>(

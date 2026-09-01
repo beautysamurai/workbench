@@ -1185,3 +1185,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this third review correction, resolve both findings with exact-commit evidence, then require fresh CI and another exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-01 21:29 JST — P0-002 accepted deep-task-chain performance review finding
+
+**Exact-head review evidence and disposition**
+
+- Commit `f692ff8` passed both push- and pull-request-event workflows: both Linux jobs passed in 19–22 seconds and both Windows portable/package jobs passed in 1 minute 46 seconds and 1 minute 56 seconds.
+- Automated Codex review completed on exact head `f692ff8` and opened one P2 finding: structural validation re-walked every ancestor for every task, making a valid deeply nested queue quadratic before recursive flattening and rendering.
+- The finding is accepted. `TASKS.md` has no task-count bound, so a user-maintained deep queue must not stall or exhaust the renderer stack during ordinary inspection.
+
+**Scoped correction**
+
+- Unique task parent paths now resolve into a memoized issue map. Missing, ambiguous, cyclic, duplicate, and valid ancestry retain their existing visible outcomes while each unresolved parent edge is traversed once.
+- Tree flattening and semantic nested-list rendering now use explicit stacks rather than recursive calls, preserving source/sibling order without call-stack depth dependence.
+- A focused 2,000-level regression uses counted `parentId` getters to assert at most three reads per task across validation and attachment, then iteratively flattens all 2,000 nodes in order.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-tasks.test.js` | Focused structure, invalid-chain, concurrency, draft, and 2,000-level linearity regressions passed; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | bounded real WSLg renderer inspection | The production renderer produced five rows for five nodes, one expected nested list, maximum depth one, zero malformed direct row structures, no horizontal overflow, and no error toast; scoped Electron shutdown was clean. |
+| passed | `git diff --check` and scoped diff review | No whitespace errors; changes are limited to linear task-tree validation/traversal, focused tests, changelog, and this append-only record. |
+
+**Next action**
+
+- Commit and push this fourth review correction, resolve the finding with exact-commit evidence, then require fresh CI and another exact-head automated review.
+- Blocker: none established.
