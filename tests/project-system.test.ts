@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deflateSync } from 'node:zlib';
 import {
   formatProjectTask,
   nextProjectTaskId,
@@ -9,6 +10,57 @@ import {
 
 function tinyPng(): Uint8Array {
   return Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+}
+
+function testPngCrc32(bytes: Uint8Array): number {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function pngWithImageDataChunks(imageDataChunks: Uint8Array[]): Uint8Array {
+  const png = Buffer.from(tinyPng());
+  const typeOffset = png.indexOf('IDAT');
+  assert.notEqual(typeOffset, -1);
+  const oldLength = png.readUInt32BE(typeOffset - 4);
+  const chunks = imageDataChunks.map((imageData) => {
+    const chunk = Buffer.alloc(imageData.length + 12);
+    chunk.writeUInt32BE(imageData.length, 0);
+    chunk.write('IDAT', 4, 'ascii');
+    chunk.set(imageData, 8);
+    chunk.writeUInt32BE(testPngCrc32(chunk.subarray(4, 8 + imageData.length)), 8 + imageData.length);
+    return chunk;
+  });
+  return Uint8Array.from(Buffer.concat([
+    png.subarray(0, typeOffset - 4),
+    ...chunks,
+    png.subarray(typeOffset + 8 + oldLength),
+  ]));
+}
+
+function pngWithImageData(imageData: Uint8Array): Uint8Array {
+  return pngWithImageDataChunks([imageData]);
+}
+
+function splitImageDataPng(): Uint8Array {
+  const png = Buffer.from(tinyPng());
+  const typeOffset = png.indexOf('IDAT');
+  assert.notEqual(typeOffset, -1);
+  const length = png.readUInt32BE(typeOffset - 4);
+  const imageData = png.subarray(typeOffset + 4, typeOffset + 4 + length);
+  return pngWithImageDataChunks([imageData.subarray(0, 5), imageData.subarray(5)]);
+}
+
+function interlacedTinyPng(): Uint8Array {
+  const png = Buffer.from(tinyPng());
+  png[28] = 1;
+  png.writeUInt32BE(testPngCrc32(png.subarray(12, 29)), 29);
+  return Uint8Array.from(png);
 }
 
 function tinyJpeg(): Uint8Array {
@@ -135,6 +187,8 @@ test('validates supported image bytes without filesystem access', () => {
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.of(1, 2, 3) }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }), /PNG, JPEG, or WebP/);
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
+  assert.equal(validateProjectTaskImage({ bytes: interlacedTinyPng() }).mediaType, 'image/png');
+  assert.equal(validateProjectTaskImage({ bytes: splitImageDataPng() }).mediaType, 'image/png');
   assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: transformedLosslessWebp() }).mediaType, 'image/webp');
@@ -165,6 +219,18 @@ test('rejects PNGs without image data or with corrupted chunk data', () => {
   assert.notEqual(imageDataType, -1);
   corruptImageData[imageDataType + 4] ^= 0x01;
   assert.throws(() => validateProjectTaskImage({ bytes: corruptImageData }), /PNG, JPEG, or WebP/);
+  assert.throws(
+    () => validateProjectTaskImage({ bytes: pngWithImageData(Uint8Array.from({ length: 11 }, () => 0x41)) }),
+    /PNG, JPEG, or WebP/,
+  );
+  assert.throws(
+    () => validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(5, 0, 0))) }),
+    /PNG, JPEG, or WebP/,
+  );
+  assert.throws(
+    () => validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(0, 0))) }),
+    /PNG, JPEG, or WebP/,
+  );
 });
 
 test('rejects malformed WebP chunks and oversized bytes before copying', () => {

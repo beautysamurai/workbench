@@ -9,7 +9,7 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 - **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 exact-head review correction)
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments, including bounded decoding of lossless WebP streams; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Publish the accepted VP8L exact-head review correction, then require fresh CI and automated re-review on PR #5
+- **Next action:** Publish the accepted image-stream exact-head review correction, then require fresh CI and automated re-review on PR #5
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -1300,8 +1300,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 | passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
 | unavailable | lint/static analysis | `package.json` defines no lint script. |
 | passed | `npm run build && git diff --check` | Production build/assets and whitespace validation passed; exit `0`. |
-
 **Next action**
 
 - Commit and push the compatibility correction, then require fresh CI and automated review on the new exact head before closing PR #5 delivery.
+- Blocker: none established.
+
+### 2026-09-01 22:57 JST — P0-002 accepted PNG image-data review finding
+
+**Exact-head review evidence and reproduction**
+
+- Exact head `1a3e24a` passed both workflow events: Linux verification completed in 15 and 18 seconds, and Windows verification/package jobs completed in 1 minute 56 seconds and 2 minutes 8 seconds.
+- Automated Codex review completed on exact head `1a3e24a` and opened one P2 finding: valid PNG chunk lengths and CRCs did not prove that concatenated IDAT bytes formed a complete zlib stream with the dimensions' required scanlines.
+- The finding is accepted. A direct compiled reproducer replaced the known-good 1×1 PNG's 11 IDAT bytes with `0x41`, recomputed the IDAT CRC, and the pre-fix validator reported `BUG: accepted recomputed-CRC arbitrary IDAT as image/png`; exit `1`.
+
+**Scoped correction**
+
+- PNG validation now concatenates consecutive IDAT payloads, performs bounded zlib inflation, requires the inflater to consume every compressed byte, and requires the exact decompressed byte count implied by width, height, color type, bit depth, and interlace mode.
+- Each non-interlaced or Adam7 pass row must begin with a defined PNG filter byte (`0` through `4`). Inflated data is capped at 160 MiB, so a compressed attachment cannot turn main-process validation into an unbounded decompression allocation.
+- Focused regressions accept the known-good stream split across two IDAT chunks and a 1×1 Adam7 variant. They reject arbitrary recomputed-CRC compressed bytes, a valid zlib stream with filter type `5`, and a valid but short scanline stream.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | Focused PNG stream, split-IDAT, Adam7, filter, scanline-length, CRC, and prior JPEG/WebP regressions passed; exit `0`. |
+| passed | direct compiled recomputed-CRC arbitrary-IDAT reproducer | The formerly accepted payload now throws the supported-image validation error; exit `0`. |
+| passed | compiled validator across 221 PNG files under `/usr/share` | All 221 valid fixtures were accepted across indexed depths 1/2/4/8, grayscale, RGB, grayscale-alpha, RGBA, and 16-bit RGB formats. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build && git diff --check` | Production build/assets and whitespace validation passed; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-png-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The isolated production app remained running under WSLg until intentional SIGINT; no scoped Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+
+**Next action**
+
+- Commit and push the PNG stream correction, resolve the review finding with evidence, then require fresh CI and exact-head automated re-review.
 - Blocker: none established.

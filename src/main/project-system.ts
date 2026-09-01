@@ -9,6 +9,7 @@ import type {
   ProjectTaskState,
   Workspace,
 } from '../shared/types';
+import { inflateSync } from 'node:zlib';
 import { shellQuote } from './path-utils';
 import { hasCompleteVp8lBitstream } from './vp8l-validator';
 import { runWslCommand } from './wsl';
@@ -20,6 +21,7 @@ const PROJECT_IMAGE_DIRECTORY = '.workbench/task-images';
 const MAX_TASK_IMAGES = 4;
 const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+const MAX_PNG_INFLATED_BYTES = 160 * 1024 * 1024;
 const projectTaskMutationQueues = new Map<string, Promise<ProjectSystemStatus>>();
 
 const PROJECT_TEMPLATES: Record<(typeof PROJECT_FILES)[number], string> = {
@@ -277,15 +279,96 @@ function validPngHeader(bytes: Uint8Array, dataStart: number): boolean {
     && (bytes[dataStart + 12] === 0 || bytes[dataStart + 12] === 1);
 }
 
+interface PngScanlinePass {
+  rowBytes: number;
+  rowCount: number;
+}
+
+function pngPassSize(size: number, start: number, step: number): number {
+  return size <= start ? 0 : Math.ceil((size - start) / step);
+}
+
+function pngScanlinePasses(
+  width: number,
+  height: number,
+  bitDepth: number,
+  colorType: number,
+  interlace: number,
+): PngScanlinePass[] | null {
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[colorType];
+  if (!channels) return null;
+  const bitsPerPixel = channels * bitDepth;
+  const definitions = interlace === 0
+    ? [[0, 0, 1, 1]]
+    : [
+      [0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4],
+      [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2],
+    ];
+  const passes: PngScanlinePass[] = [];
+  let inflatedBytes = 0;
+  for (const [xStart = 0, yStart = 0, xStep = 1, yStep = 1] of definitions) {
+    const passWidth = pngPassSize(width, xStart, xStep);
+    const rowCount = pngPassSize(height, yStart, yStep);
+    if (!passWidth || !rowCount) continue;
+    const rowBytes = Math.ceil((passWidth * bitsPerPixel) / 8);
+    const passBytes = (rowBytes + 1) * rowCount;
+    if (!Number.isSafeInteger(passBytes) || inflatedBytes > MAX_PNG_INFLATED_BYTES - passBytes) return null;
+    inflatedBytes += passBytes;
+    passes.push({ rowBytes, rowCount });
+  }
+  return passes.length ? passes : null;
+}
+
+function hasValidPngImageData(
+  chunks: Uint8Array[],
+  compressedBytes: number,
+  width: number,
+  height: number,
+  bitDepth: number,
+  colorType: number,
+  interlace: number,
+): boolean {
+  const passes = pngScanlinePasses(width, height, bitDepth, colorType, interlace);
+  if (!passes) return false;
+  const expectedBytes = passes.reduce((total, pass) => total + ((pass.rowBytes + 1) * pass.rowCount), 0);
+  const compressed = Buffer.allocUnsafe(compressedBytes);
+  let compressedOffset = 0;
+  for (const chunk of chunks) {
+    compressed.set(chunk, compressedOffset);
+    compressedOffset += chunk.length;
+  }
+  try {
+    const result = inflateSync(compressed, {
+      info: true,
+      maxOutputLength: expectedBytes,
+    }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
+    if (result.engine.bytesWritten !== compressed.length || result.buffer.length !== expectedBytes) return false;
+    let offset = 0;
+    for (const pass of passes) {
+      for (let row = 0; row < pass.rowCount; row += 1) {
+        if ((result.buffer[offset] ?? 5) > 4) return false;
+        offset += pass.rowBytes + 1;
+      }
+    }
+    return offset === result.buffer.length;
+  } catch {
+    return false;
+  }
+}
+
 function isStructuredPng(bytes: Uint8Array): boolean {
   if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return false;
   let offset = 8;
   let colorType = -1;
   let bitDepth = 0;
+  let width = 0;
+  let height = 0;
+  let interlace = 0;
   let hasPalette = false;
   let hasImageData = false;
   let imageDataEnded = false;
   let imageDataBytes = 0;
+  const imageDataChunks: Uint8Array[] = [];
 
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length || !isPngChunkType(bytes, offset + 4)) return false;
@@ -301,6 +384,9 @@ function isStructuredPng(bytes: Uint8Array): boolean {
       if (type !== 'IHDR' || length !== 13 || !validPngHeader(bytes, dataStart)) return false;
       bitDepth = bytes[dataStart + 8] ?? 0;
       colorType = bytes[dataStart + 9] ?? -1;
+      width = uint32BigEndian(bytes, dataStart);
+      height = uint32BigEndian(bytes, dataStart + 4);
+      interlace = bytes[dataStart + 12] ?? 0;
     } else if (type === 'IHDR') {
       return false;
     } else if (type === 'PLTE') {
@@ -313,12 +399,16 @@ function isStructuredPng(bytes: Uint8Array): boolean {
       if (imageDataEnded) return false;
       hasImageData = true;
       imageDataBytes += length;
+      imageDataChunks.push(bytes.subarray(dataStart, dataEnd));
     } else if (type === 'IEND') {
       return length === 0
         && hasImageData
         && imageDataBytes > 0
         && (colorType !== 3 || hasPalette)
-        && chunkEnd === bytes.length;
+        && chunkEnd === bytes.length
+        && hasValidPngImageData(
+          imageDataChunks, imageDataBytes, width, height, bitDepth, colorType, interlace,
+        );
     } else {
       if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return false;
       if (hasImageData) imageDataEnded = true;
