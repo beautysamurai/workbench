@@ -1279,3 +1279,29 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this sixth review correction, reply to and resolve the finding with exact-commit evidence, then require fresh push/pull-request CI and another exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-01 22:45 JST — P0-002 retained valid sparse VP8L simple codes
+
+**Post-push local reflection**
+
+- Exact correction `c0eced2` passed both workflow events: both Linux jobs completed in 16 seconds, and Windows verification/package jobs completed in 1 minute 52 seconds and 1 minute 47 seconds.
+- Expanding the local differential check beyond the initial 500 mutations found one libwebp-accepted stream that Workbench rejected. The VP8L simple-code representation always carries up to two 8-bit symbol values, while the distance alphabet has only 40 usable entries; libwebp ignores an out-of-alphabet leaf and retains another valid in-range leaf, but Workbench rejected the whole tree immediately.
+- The simple-code reader now records only symbols inside the active alphabet. The existing full-tree builder still rejects the stream if no usable leaf remains, so this restores compatible valid input without weakening truncated or malformed-tree rejection.
+- A deterministic transformed-lossless fixture reproduces the sparse distance tree and remains in focused tests.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | Focused validation accepts the sparse simple-code fixture and retains all malformed/truncated image regressions; exit `0`. |
+| passed | direct compiled validation of `/tmp/workbench-vp8l-17x9-decoder-only.webp` | The previously divergent libwebp-valid fixture is accepted as `image/webp`; exit `0`. |
+| passed | 10,000 deterministic VP8L payload mutations compared with libwebp | Both accepted 1,283; both rejected 8,717; Workbench-only and libwebp-only divergence counts were both zero. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build && git diff --check` | Production build/assets and whitespace validation passed; exit `0`. |
+
+**Next action**
+
+- Commit and push the compatibility correction, then require fresh CI and automated review on the new exact head before closing PR #5 delivery.
+- Blocker: none established.

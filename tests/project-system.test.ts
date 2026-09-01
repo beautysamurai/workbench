@@ -29,6 +29,16 @@ function transformedLosslessWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRrAAAABXRUJQVlA4TKQAAAAvEAACEJkKRPQ/NhHR/4CDSJIU6ZiZ4f/Tv9CPtaCgbRs5tHuNIm4iSRaV/z8g4eloCcRPAjESTsdJIEbCi5GwOp4EkgFUm7YBszn1kGgf40wjjzLqbLOPMeZYc88z7njjmxIJIJAEAsi/P6BRSKRRCKRTCKBTCQgyAUBnZ2JhoJJAY2NmZaAQGGQSAwsalYQgEwA0dma+eOCNX5754I8XVkYKAQ==', 'base64'));
 }
 
+function losslessWebpWithUnusedSimpleSymbol(): Uint8Array {
+  const bytes = transformedLosslessWebp();
+  // Simple codes carry 8-bit values; libwebp ignores an out-of-alphabet distance leaf
+  // when the same code still defines an in-range leaf.
+  bytes[89] ^= 0x08;
+  bytes[182] ^= 0x02;
+  bytes[183] ^= 0x80;
+  return bytes;
+}
+
 function tinyLossyWebp(): Uint8Array {
   // Official libwebp-test-data small_1x1.webp fixture.
   return Uint8Array.from(Buffer.from('UklGRlYAAABXRUJQVlA4IDoAAADwAgCdASoBAAEAAEcIhYWIhYSIAgICdaoD+AP6Ag1NGAD+/vNYf/5gZt2KO//mBv/80F4SW6//zLwASUNNVAgAAAB0ZXN0MXgxAA==', 'base64'));
@@ -128,6 +138,7 @@ test('validates supported image bytes without filesystem access', () => {
   assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: transformedLosslessWebp() }).mediaType, 'image/webp');
+  assert.equal(validateProjectTaskImage({ bytes: losslessWebpWithUnusedSimpleSymbol() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: tinyLossyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
 });

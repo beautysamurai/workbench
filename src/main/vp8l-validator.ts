@@ -141,12 +141,10 @@ function readHuffmanCode(reader: Vp8lBitReader, alphabetSize: number): HuffmanCo
     const symbolCount = reader.read(1) + 1;
     const firstSymbolBitCount = reader.read(1) ? 8 : 1;
     const firstSymbol = reader.read(firstSymbolBitCount);
-    if (firstSymbol >= alphabetSize) throw new InvalidVp8l();
-    codeLengths[firstSymbol] = 1;
+    if (firstSymbol < alphabetSize) codeLengths[firstSymbol] = 1;
     if (symbolCount === 2) {
       const secondSymbol = reader.read(8);
-      if (secondSymbol >= alphabetSize) throw new InvalidVp8l();
-      codeLengths[secondSymbol] = 1;
+      if (secondSymbol < alphabetSize) codeLengths[secondSymbol] = 1;
     }
     return buildHuffmanCode(codeLengths);
   }
