@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ProjectTask } from '../src/shared/types';
-import { buildProjectTaskTree } from '../src/renderer/project-tasks';
+import { buildProjectTaskTree, mergeProjectTaskImages } from '../src/renderer/project-tasks';
 
 function task(id: string, parentId: string | null = null): ProjectTask {
   return {
@@ -37,4 +37,28 @@ test('marks descendants of an invalid parent chain as invalid too', () => {
   assert.equal(tree.length, 2);
   assert.match(tree[0]?.issue ?? '', /not found/);
   assert.match(tree[1]?.issue ?? '', /not found/);
+});
+
+test('merges overlapping image reads against the latest task draft', async () => {
+  interface Image { id: string; bytes: Uint8Array }
+  let images: Image[] = [];
+  let finishFirst: ((image: Image) => void) | undefined;
+  let finishSecond: ((image: Image) => void) | undefined;
+  const firstRead = new Promise<Image>((resolve) => { finishFirst = resolve; });
+  const secondRead = new Promise<Image>((resolve) => { finishSecond = resolve; });
+  const additions = [firstRead, secondRead].map(async (read) => {
+    const image = await read;
+    images = mergeProjectTaskImages(images, [image]);
+  });
+  finishSecond?.({ id: 'second', bytes: Uint8Array.of(2) });
+  finishFirst?.({ id: 'first', bytes: Uint8Array.of(1) });
+  await Promise.all(additions);
+  assert.deepEqual(images.map((image) => image.id), ['second', 'first']);
+  assert.throws(
+    () => mergeProjectTaskImages(images, Array.from({ length: 3 }, (_unused, index) => ({
+      id: `extra-${index}`,
+      bytes: Uint8Array.of(index),
+    }))),
+    /no more than 4/,
+  );
 });

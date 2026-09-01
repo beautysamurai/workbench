@@ -1092,3 +1092,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The pull request documents behavior, exact verification, unavailable checks, risks, and excluded user/WB-006 state.
 - Next action: commit and push this delivery record, then require both push- and pull-request-event CI plus automated review on the recorded head. Do not merge without separate user authorization.
 - Blocker: none established.
+
+### 2026-09-01 20:18 JST — P0-002 accepted image validation and concurrency review findings
+
+**Remote evidence and disposition**
+
+- PR #5 recorded head `bb90bb2` passed both workflow events: Linux verification completed in 18 and 22 seconds, and Windows portable verification/packaging completed in 1 minute 46 seconds and 2 minutes 28 seconds.
+- Automated Codex review completed on task commit `b7f963f` and opened three P2 threads: malformed or empty WebP chunks could pass the shallow RIFF check; an oversized renderer-supplied typed array was copied before the 5 MB limit; and overlapping asynchronous paste/drop reads could replace rather than combine successfully read batches.
+- All three findings are accepted. They affect the advertised image-safety boundary and ordinary task-composer behavior.
+
+**Scoped correction**
+
+- WebP validation now walks bounded RIFF chunks, enforces exact container and chunk lengths (including padding), validates VP8/VP8L/VP8X headers and dimensions, requires actual image payload data, and validates nested animated-frame image chunks. Empty VP8X metadata, truncated containers, malformed dimensions, and header-only image payloads are rejected.
+- The main-process validator checks `byteLength` before making its defensive `Uint8Array` copy, avoiding the additional oversized allocation identified by review.
+- Image reads now merge into the latest workspace draft after asynchronous byte/preview work completes. Count and aggregate-byte limits are rechecked against that latest state, so overlapping paste/drop batches cannot silently discard one another; a workspace switch also cannot repaint the wrong preview list.
+- Focused regressions cover valid simple and extended WebP, empty/truncated WebP, pre-copy oversized rejection, out-of-order overlapping image reads, and final count enforcement.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | Both focused files passed the new security and concurrency regressions; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `git diff --check` and scoped diff review | No whitespace errors; correction is limited to image validation/merge code, focused tests, and this append-only review record. |
+
+**Next action**
+
+- Commit and push the accepted fixes, resolve all three review threads with commit evidence, then require fresh push- and pull-request CI plus automated review on the new exact head.
+- Blocker: none established.

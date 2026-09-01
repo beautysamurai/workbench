@@ -220,6 +220,12 @@ function uint32LittleEndian(bytes: Uint8Array, offset: number): number {
     + ((bytes[offset + 3] ?? 0) * 0x1000000);
 }
 
+function uint24LittleEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0)
+    + ((bytes[offset + 1] ?? 0) << 8)
+    + ((bytes[offset + 2] ?? 0) << 16);
+}
+
 function validImageDimensions(width: number, height: number): boolean {
   return width > 0 && height > 0 && width <= 16_384 && height <= 16_384 && width * height <= 40_000_000;
 }
@@ -248,24 +254,84 @@ function isStructuredJpeg(bytes: Uint8Array): boolean {
   return false;
 }
 
+function isStructuredVp8Payload(bytes: Uint8Array, start: number, length: number): boolean {
+  if (length <= 10 || !startsWithBytes(bytes, [0x9d, 0x01, 0x2a], start + 3)) return false;
+  const width = ((bytes[start + 6] ?? 0) + ((bytes[start + 7] ?? 0) << 8)) & 0x3fff;
+  const height = ((bytes[start + 8] ?? 0) + ((bytes[start + 9] ?? 0) << 8)) & 0x3fff;
+  return validImageDimensions(width, height);
+}
+
+function isStructuredVp8lPayload(bytes: Uint8Array, start: number, length: number): boolean {
+  if (length <= 5 || bytes[start] !== 0x2f) return false;
+  const dimensions = uint32LittleEndian(bytes, start + 1);
+  const width = (dimensions & 0x3fff) + 1;
+  const height = ((dimensions >>> 14) & 0x3fff) + 1;
+  return (dimensions >>> 29) === 0 && validImageDimensions(width, height);
+}
+
+function isStructuredVp8xPayload(bytes: Uint8Array, start: number, length: number): boolean {
+  if (length !== 10
+    || ((bytes[start] ?? 0) & 0xc1) !== 0
+    || bytes[start + 1] !== 0
+    || bytes[start + 2] !== 0
+    || bytes[start + 3] !== 0) return false;
+  const width = uint24LittleEndian(bytes, start + 4) + 1;
+  const height = uint24LittleEndian(bytes, start + 7) + 1;
+  return validImageDimensions(width, height);
+}
+
+function hasStructuredWebpImageChunks(
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+  nested = false,
+): boolean {
+  let offset = start;
+  let hasImage = false;
+  while (offset < end) {
+    if (offset + 8 > end) return false;
+    const chunkType = String.fromCharCode(...bytes.slice(offset, offset + 4));
+    const chunkLength = uint32LittleEndian(bytes, offset + 4);
+    const payloadStart = offset + 8;
+    const payloadEnd = payloadStart + chunkLength;
+    const paddedEnd = payloadEnd + (chunkLength % 2);
+    if (payloadEnd < payloadStart || paddedEnd > end) return false;
+
+    if (chunkType === 'VP8 ') {
+      if (!isStructuredVp8Payload(bytes, payloadStart, chunkLength)) return false;
+      hasImage = true;
+    } else if (chunkType === 'VP8L') {
+      if (!isStructuredVp8lPayload(bytes, payloadStart, chunkLength)) return false;
+      hasImage = true;
+    } else if (chunkType === 'VP8X') {
+      if (nested || offset !== start || !isStructuredVp8xPayload(bytes, payloadStart, chunkLength)) return false;
+    } else if (chunkType === 'ANMF') {
+      if (nested || chunkLength < 24) return false;
+      const width = uint24LittleEndian(bytes, payloadStart + 6) + 1;
+      const height = uint24LittleEndian(bytes, payloadStart + 9) + 1;
+      if (!validImageDimensions(width, height)
+        || !hasStructuredWebpImageChunks(bytes, payloadStart + 16, payloadEnd, true)) return false;
+      hasImage = true;
+    }
+    offset = paddedEnd;
+  }
+  return offset === end && hasImage;
+}
+
 function isStructuredWebp(bytes: Uint8Array): boolean {
-  if (bytes.length < 20
-    || !startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46])
-    || !startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)) return false;
-  const chunkType = String.fromCharCode(...bytes.slice(12, 16));
-  const declaredFileBytes = uint32LittleEndian(bytes, 4) + 8;
-  const declaredChunkBytes = uint32LittleEndian(bytes, 16);
-  return (chunkType === 'VP8 ' || chunkType === 'VP8L' || chunkType === 'VP8X')
-    && declaredFileBytes === bytes.length
-    && declaredChunkBytes <= bytes.length - 20;
+  return bytes.length >= 20
+    && startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46])
+    && startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
+    && uint32LittleEndian(bytes, 4) + 8 === bytes.length
+    && hasStructuredWebpImageChunks(bytes, 12, bytes.length);
 }
 
 export function validateProjectTaskImage(value: unknown): ValidatedProjectImage {
   const candidate = (value ?? {}) as Partial<ProjectTaskImageDraft>;
   if (!(candidate.bytes instanceof Uint8Array)) throw new Error('Pasted image data is invalid.');
+  if (!candidate.bytes.byteLength) throw new Error('Pasted image is empty.');
+  if (candidate.bytes.byteLength > MAX_TASK_IMAGE_BYTES) throw new Error('Each task image must be 5 MB or smaller.');
   const bytes = Uint8Array.from(candidate.bytes);
-  if (!bytes.length) throw new Error('Pasted image is empty.');
-  if (bytes.length > MAX_TASK_IMAGE_BYTES) throw new Error('Each task image must be 5 MB or smaller.');
   if (isStructuredPng(bytes)) {
     return { bytes, mediaType: 'image/png', extension: 'png' };
   }

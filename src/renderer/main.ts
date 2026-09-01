@@ -38,7 +38,11 @@ import {
 import { CodexSessionPreferences } from './codex-session-preferences.js';
 import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
-import { buildProjectTaskTree, type ProjectTaskTreeNode } from './project-tasks.js';
+import {
+  buildProjectTaskTree,
+  mergeProjectTaskImages,
+  type ProjectTaskTreeNode,
+} from './project-tasks.js';
 import { TerminalBuffer } from './terminal-buffer.js';
 
 type MainTab = 'overview' | 'codex' | 'terminal';
@@ -1314,13 +1318,13 @@ async function addProjectTaskImages(files: File[]): Promise<void> {
         previewUrl: await filePreviewUrl(file),
       });
     }
-    const combined = [...existing, ...accepted];
-    if (combined.reduce((total, image) => total + image.bytes.byteLength, 0) > 12 * 1024 * 1024) {
-      throw new Error('Task images must total 12 MB or less.');
-    }
+    const latest = ui.projectTaskImages.get(workspace.id) ?? [];
+    const combined = mergeProjectTaskImages(latest, accepted);
     ui.projectTaskImages.set(workspace.id, combined);
-    const previews = document.querySelector<HTMLElement>('#task-image-previews');
-    if (previews) previews.innerHTML = renderPendingProjectTaskImages(combined);
+    if (currentWorkspace()?.id === workspace.id) {
+      const previews = document.querySelector<HTMLElement>('#task-image-previews');
+      if (previews) previews.innerHTML = renderPendingProjectTaskImages(combined);
+    }
     toast(`${accepted.length} image${accepted.length === 1 ? '' : 's'} attached.`);
   } catch (error) {
     toast(errorMessage(error), 'error');

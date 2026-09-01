@@ -11,6 +11,22 @@ function tinyPng(): Uint8Array {
   return Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
 }
 
+function tinyWebp(): Uint8Array {
+  return Uint8Array.from(Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
+}
+
+function extendedTinyWebp(): Uint8Array {
+  const imageChunk = tinyWebp().slice(12);
+  const bytes = Buffer.alloc(30 + imageChunk.length);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WEBP', 8, 'ascii');
+  bytes.write('VP8X', 12, 'ascii');
+  bytes.writeUInt32LE(10, 16);
+  imageChunk.forEach((value, index) => { bytes[30 + index] = value; });
+  return bytes;
+}
+
 test('parses task headings and normalizes supported states', () => {
   const tasks = parseProjectTasks('# Tasks\n\n### P0-001 — Ship it\n\n- **State:** in progress\n- **Objective:** Finish safely.\n');
   assert.deepEqual(tasks, [{
@@ -58,4 +74,23 @@ test('validates supported image bytes without filesystem access', () => {
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.of(1, 2, 3) }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }), /PNG, JPEG, or WebP/);
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
+  assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
+  assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
+});
+
+test('rejects malformed WebP chunks and oversized bytes before copying', () => {
+  const emptyVp8x = Buffer.alloc(20);
+  emptyVp8x.write('RIFF', 0, 'ascii');
+  emptyVp8x.writeUInt32LE(12, 4);
+  emptyVp8x.write('WEBP', 8, 'ascii');
+  emptyVp8x.write('VP8X', 12, 'ascii');
+  emptyVp8x.writeUInt32LE(0, 16);
+  assert.throws(() => validateProjectTaskImage({ bytes: emptyVp8x }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: tinyWebp().slice(0, -1) }), /PNG, JPEG, or WebP/);
+
+  const oversized = new Uint8Array((5 * 1024 * 1024) + 1);
+  Object.defineProperty(oversized, Symbol.iterator, {
+    value: () => { throw new Error('Oversized bytes were copied.'); },
+  });
+  assert.throws(() => validateProjectTaskImage({ bytes: oversized }), /5 MB or smaller/);
 });

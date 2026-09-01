@@ -1,4 +1,7 @@
-import type { ProjectTask } from '../shared/types.js';
+import type { ProjectTask, ProjectTaskImageDraft } from '../shared/types.js';
+
+const MAX_TASK_IMAGES = 4;
+const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
 
 export interface ProjectTaskTreeNode {
   task: ProjectTask;
@@ -47,4 +50,16 @@ export function buildProjectTaskTree(tasks: ProjectTask[]): ProjectTaskTreeNode[
     else roots.push(node);
   }
   return roots;
+}
+
+export function mergeProjectTaskImages<T extends Pick<ProjectTaskImageDraft, 'bytes'>>(
+  current: T[],
+  incoming: T[],
+): T[] {
+  const combined = [...current, ...incoming];
+  if (combined.length > MAX_TASK_IMAGES) throw new Error(`Attach no more than ${MAX_TASK_IMAGES} task images.`);
+  if (combined.reduce((total, image) => total + image.bytes.byteLength, 0) > MAX_TASK_IMAGE_TOTAL_BYTES) {
+    throw new Error('Task images must total 12 MB or less.');
+  }
+  return combined;
 }
