@@ -4,6 +4,7 @@ import type { ProjectTask } from '../src/shared/types';
 import {
   buildProjectTaskTree,
   mergeProjectTaskImages,
+  projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
 } from '../src/renderer/project-tasks';
 
@@ -74,4 +75,12 @@ test('keeps images added while an earlier task submission is pending', () => {
     removeSubmittedProjectTaskImages([submitted, addedWhilePending], [submitted]),
     [addedWhilePending],
   );
+});
+
+test('distinguishes task-field edits made while a submission is pending', () => {
+  const submitted = {
+    title: 'Submitted task', priority: 'P2', parentId: '', objective: '', acceptanceCriteria: '',
+  };
+  assert.equal(projectTaskDraftMatches({ ...submitted }, submitted), true);
+  assert.equal(projectTaskDraftMatches({ ...submitted, objective: 'A newer draft edit' }, submitted), false);
 });

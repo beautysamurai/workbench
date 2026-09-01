@@ -11,6 +11,15 @@ function tinyPng(): Uint8Array {
   return Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
 }
 
+function tinyJpeg(): Uint8Array {
+  return Uint8Array.from([
+    0xff, 0xd8,
+    0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00,
+    0x00, 0xff, 0xd9,
+  ]);
+}
+
 function tinyWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
 }
@@ -87,8 +96,19 @@ test('validates supported image bytes without filesystem access', () => {
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.of(1, 2, 3) }), /PNG, JPEG, or WebP/);
   assert.throws(() => validateProjectTaskImage({ bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }), /PNG, JPEG, or WebP/);
   assert.equal(validateProjectTaskImage({ bytes: tinyPng() }).mediaType, 'image/png');
+  assert.equal(validateProjectTaskImage({ bytes: tinyJpeg() }).mediaType, 'image/jpeg');
   assert.equal(validateProjectTaskImage({ bytes: tinyWebp() }).mediaType, 'image/webp');
   assert.equal(validateProjectTaskImage({ bytes: extendedTinyWebp() }).mediaType, 'image/webp');
+});
+
+test('rejects JPEGs without a bounded scan and encoded image data', () => {
+  const withoutScan = Uint8Array.from([
+    0xff, 0xd8,
+    0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    0xff, 0xd9,
+  ]);
+  assert.throws(() => validateProjectTaskImage({ bytes: withoutScan }), /PNG, JPEG, or WebP/);
+  assert.throws(() => validateProjectTaskImage({ bytes: tinyJpeg().slice(0, -1) }), /PNG, JPEG, or WebP/);
 });
 
 test('rejects PNGs without image data or with corrupted chunk data', () => {

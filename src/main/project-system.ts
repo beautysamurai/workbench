@@ -328,14 +328,100 @@ function isStructuredPng(bytes: Uint8Array): boolean {
 }
 
 function isStructuredJpeg(bytes: Uint8Array): boolean {
-  if (bytes.length < 12 || !startsWithBytes(bytes, [0xff, 0xd8]) || !startsWithBytes(bytes, [0xff, 0xd9], bytes.length - 2)) return false;
+  if (bytes.length < 25 || !startsWithBytes(bytes, [0xff, 0xd8])) return false;
   const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
-  for (let index = 2; index + 8 < bytes.length; index += 1) {
-    if (bytes[index] !== 0xff || !startOfFrameMarkers.has(bytes[index + 1] ?? 0)) continue;
-    const segmentLength = ((bytes[index + 2] ?? 0) << 8) + (bytes[index + 3] ?? 0);
-    const height = ((bytes[index + 5] ?? 0) << 8) + (bytes[index + 6] ?? 0);
-    const width = ((bytes[index + 7] ?? 0) << 8) + (bytes[index + 8] ?? 0);
-    if (segmentLength >= 7 && index + 2 + segmentLength <= bytes.length && validImageDimensions(width, height)) return true;
+  let offset = 2;
+  let hasFrame = false;
+  let hasScan = false;
+  const frameComponentIds = new Set<number>();
+  const scannedComponentIds = new Set<number>();
+
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) return false;
+    while (bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) return false;
+    const marker = bytes[offset] ?? 0;
+    offset += 1;
+
+    if (marker === 0xd9) {
+      return hasFrame && hasScan && offset === bytes.length
+        && [...frameComponentIds].every((componentId) => scannedComponentIds.has(componentId));
+    }
+    if (marker === 0x00 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) return false;
+    if (marker === 0x01) continue;
+    if (offset + 2 > bytes.length) return false;
+    const segmentLength = ((bytes[offset] ?? 0) << 8) + (bytes[offset + 1] ?? 0);
+    const dataStart = offset + 2;
+    const segmentEnd = offset + segmentLength;
+    if (segmentLength < 2 || segmentEnd < dataStart || segmentEnd > bytes.length) return false;
+
+    if (startOfFrameMarkers.has(marker)) {
+      const componentCount = bytes[dataStart + 5] ?? 0;
+      const precision = bytes[dataStart] ?? 0;
+      const height = ((bytes[dataStart + 1] ?? 0) << 8) + (bytes[dataStart + 2] ?? 0);
+      const width = ((bytes[dataStart + 3] ?? 0) << 8) + (bytes[dataStart + 4] ?? 0);
+      if (hasFrame || precision < 2 || precision > 16 || componentCount < 1 || componentCount > 4
+        || segmentLength !== 8 + (componentCount * 3) || !validImageDimensions(width, height)) return false;
+      for (let component = 0; component < componentCount; component += 1) {
+        const componentOffset = dataStart + 6 + (component * 3);
+        const componentId = bytes[componentOffset] ?? 0;
+        const sampling = bytes[componentOffset + 1] ?? 0;
+        const quantizationTable = bytes[componentOffset + 2] ?? 0xff;
+        if (frameComponentIds.has(componentId)
+          || (sampling >>> 4) < 1 || (sampling >>> 4) > 4
+          || (sampling & 0x0f) < 1 || (sampling & 0x0f) > 4
+          || quantizationTable > 3) return false;
+        frameComponentIds.add(componentId);
+      }
+      hasFrame = true;
+      offset = segmentEnd;
+      continue;
+    }
+
+    if (marker !== 0xda) {
+      offset = segmentEnd;
+      continue;
+    }
+
+    const scanComponentCount = bytes[dataStart] ?? 0;
+    if (!hasFrame || scanComponentCount < 1 || scanComponentCount > 4
+      || segmentLength !== 6 + (scanComponentCount * 2)) return false;
+    const scanComponentIds = new Set<number>();
+    for (let component = 0; component < scanComponentCount; component += 1) {
+      const componentOffset = dataStart + 1 + (component * 2);
+      const componentId = bytes[componentOffset] ?? 0;
+      const tableSelectors = bytes[componentOffset + 1] ?? 0xff;
+      if (!frameComponentIds.has(componentId) || scanComponentIds.has(componentId)
+        || (tableSelectors >>> 4) > 3 || (tableSelectors & 0x0f) > 3) return false;
+      scanComponentIds.add(componentId);
+    }
+
+    let scanOffset = segmentEnd;
+    let scanBytes = 0;
+    let nextMarker = -1;
+    while (scanOffset < bytes.length) {
+      if (bytes[scanOffset] !== 0xff) {
+        scanBytes += 1;
+        scanOffset += 1;
+        continue;
+      }
+      const markerStart = scanOffset;
+      while (bytes[scanOffset] === 0xff) scanOffset += 1;
+      if (scanOffset >= bytes.length) return false;
+      const scanMarker = bytes[scanOffset] ?? 0;
+      scanOffset += 1;
+      if (scanMarker === 0x00) {
+        scanBytes += 1;
+        continue;
+      }
+      if (scanMarker >= 0xd0 && scanMarker <= 0xd7) continue;
+      nextMarker = markerStart;
+      break;
+    }
+    if (scanBytes === 0 || nextMarker < 0) return false;
+    for (const componentId of scanComponentIds) scannedComponentIds.add(componentId);
+    hasScan = true;
+    offset = nextMarker;
   }
   return false;
 }

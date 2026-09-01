@@ -41,6 +41,7 @@ import { createMockApi } from './mock-api.js';
 import {
   buildProjectTaskTree,
   mergeProjectTaskImages,
+  projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
   type ProjectTaskTreeNode,
 } from './project-tasks.js';
@@ -1252,6 +1253,13 @@ async function submitProjectTask(): Promise<void> {
   if (!workspace || !form || !form.reportValidity() || ui.projectLoading.has(workspace.id)) return;
   const data = new FormData(form);
   const previousTaskIds = new Set(ui.projectSystems.get(workspace.id)?.tasks.map((task) => task.id) ?? []);
+  const submittedDraft: ProjectTaskComposerDraft = {
+    title: String(data.get('title') ?? ''),
+    objective: String(data.get('objective') ?? ''),
+    priority: String(data.get('priority') ?? 'P2') as ProjectTaskPriority,
+    parentId: String(data.get('parentId') ?? ''),
+    acceptanceCriteria: String(data.get('acceptanceCriteria') ?? ''),
+  };
   const submittedImages = [...(ui.projectTaskImages.get(workspace.id) ?? [])];
   ui.projectLoading.add(workspace.id);
   form.setAttribute('aria-busy', 'true');
@@ -1264,16 +1272,19 @@ async function submitProjectTask(): Promise<void> {
   let createdId = 'Task';
   try {
     ui.projectSystems.set(workspace.id, await api.project.addTask(workspace.id, {
-      title: String(data.get('title') ?? ''),
-      objective: String(data.get('objective') ?? ''),
-      priority: String(data.get('priority') ?? 'P2') as ProjectTaskPriority,
-      parentId: String(data.get('parentId') ?? '') || null,
-      acceptanceCriteria: String(data.get('acceptanceCriteria') ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+      title: submittedDraft.title,
+      objective: submittedDraft.objective,
+      priority: submittedDraft.priority,
+      parentId: submittedDraft.parentId || null,
+      acceptanceCriteria: submittedDraft.acceptanceCriteria.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
       images: submittedImages.map(({ name, mediaType, bytes }) => ({ name, mediaType, bytes })),
     }));
     const created = ui.projectSystems.get(workspace.id)?.tasks.find((task) => !previousTaskIds.has(task.id));
     createdId = created?.id ?? createdId;
-    ui.projectTaskDrafts.delete(workspace.id);
+    const currentDraft = ui.projectTaskDrafts.get(workspace.id);
+    if (!currentDraft || projectTaskDraftMatches(currentDraft, submittedDraft)) {
+      ui.projectTaskDrafts.delete(workspace.id);
+    }
     const remainingImages = removeSubmittedProjectTaskImages(
       ui.projectTaskImages.get(workspace.id) ?? [],
       submittedImages,

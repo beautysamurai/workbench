@@ -71,3 +71,22 @@ export function removeSubmittedProjectTaskImages<T>(
   const submittedImages = new Set(submitted);
   return current.filter((image) => !submittedImages.has(image));
 }
+
+interface ProjectTaskDraftFields {
+  title: string;
+  priority: string;
+  parentId: string;
+  objective: string;
+  acceptanceCriteria: string;
+}
+
+export function projectTaskDraftMatches(
+  current: ProjectTaskDraftFields,
+  submitted: ProjectTaskDraftFields,
+): boolean {
+  return current.title === submitted.title
+    && current.priority === submitted.priority
+    && current.parentId === submitted.parentId
+    && current.objective === submitted.objective
+    && current.acceptanceCriteria === submitted.acceptanceCriteria;
+}

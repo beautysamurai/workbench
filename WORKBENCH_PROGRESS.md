@@ -1154,3 +1154,34 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this second review correction, resolve the three findings with exact-commit evidence, then require fresh CI and another automated review on the new head.
 - Blocker: none established.
+
+### 2026-09-01 20:45 JST — P0-002 accepted JPEG-structure and pending-field review findings
+
+**Exact-head review evidence and disposition**
+
+- Commit `85fa0ae` passed both push- and pull-request-event workflows: both Linux jobs passed in 18 seconds and both Windows portable/package jobs passed in 1 minute 42 seconds and 2 minutes 2 seconds.
+- Automated Codex review completed on exact head `85fa0ae` and opened two P2 findings: JPEG acceptance searched for SOF-like bytes without walking marker boundaries or requiring a scan, and successful task submission still deleted text/select edits made after the submitted field snapshot.
+- Both findings are accepted. They are the JPEG and non-image equivalents of the previously corrected structural-validation and draft-preservation cases.
+
+**Scoped correction**
+
+- JPEG validation now walks the bounded marker sequence from SOI through exact terminal EOI, checks segment lengths, frame precision/dimensions/components/sampling/table selectors, requires referenced frame components to appear in one or more bounded SOS scans, handles byte stuffing and restart markers, and requires non-empty encoded scan bytes.
+- Task submission now snapshots all composer field values sent to the main process. Successful cleanup clears those fields only if the live draft still exactly matches that snapshot; any title, priority, parent, objective, or criteria edit made while awaiting completion remains visible.
+- Focused regressions accept a framed/scanned JPEG, reject a frame-only JPEG and a truncated scan, and distinguish unchanged fields from a newer objective edit.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | Both focused files passed; exit `0`. |
+| passed | compiled `validateProjectTaskImage` against `/usr/share/emscripten/tests/screenshot.jpg` | Accepted the real 50,759-byte, 600×450 baseline JFIF fixture as `image/jpeg`; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `git diff --check` and scoped diff review | No whitespace errors; changes are limited to JPEG validation, submitted-field cleanup, focused tests, changelog, and this append-only record. |
+
+**Next action**
+
+- Commit and push this third review correction, resolve both findings with exact-commit evidence, then require fresh CI and another exact-head automated review.
+- Blocker: none established.
