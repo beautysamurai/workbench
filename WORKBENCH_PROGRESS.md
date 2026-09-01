@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at synchronization and delivery)
+- **Active task:** P0-002 — GUI enhancement for coding projects (`in progress` at PR #5 CI and automated review)
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
 - **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and safe image attachments; merged P1-004 now also gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Verify P0-002 atop the latest merged `main`, publish its pull request, then begin P0-004
+- **Next action:** Complete PR #5 CI and automated review, then begin P0-004
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -1062,4 +1062,33 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run build` completed the production build and asset copy; exit `0`.
 - `npm start -- --enable-logging=stderr` launched the synchronized application under WSLg and remained running beyond 10 seconds. Only the known non-fatal WSL DBus/GPU warnings appeared.
 - Next action: publish the P0-002 branch and complete its pull-request CI/review loop, then begin P0-004.
+- Blocker: none established.
+
+### 2026-09-01 20:09 JST — P0-002 published an isolated delivery branch
+
+**Starting state and preservation**
+
+- Fetched `origin/main` at merged P1-004 correction `ee78b7c`. The unpublished P0-002 tree was exactly one commit ahead.
+- The primary checkout contained the user's new unstaged WB-006 queue entry plus untracked `.workbench/` runtime metadata and `image-3.png`. A separate `/tmp/workbench-wb-006` worktree also contained active uncommitted WB-006 implementation. None of that state was staged, stashed, copied, or modified.
+- Created clean worktree `/tmp/workbench-p0-002-delivery` and fresh branch `codex/p0-002-structured-tasks-delivery` directly from `origin/main`, then cherry-picked only audited P0-002 commit `0e39624` as `b7f963f`.
+- The clean commit tree hash `4c7b678` exactly matched both locally verified P0-002 copies. The one-commit ancestry/path audit lists only the 17 documented task source, test, and record paths.
+- `.gitignore` excludes dependencies, build output, releases, logs, and editor state. A tracked filename and credential-signature scan found no environment files, private keys, recognizable provider tokens, or task runtime/screenshot files.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm ci` | Installed the locked npm dependency graph in the clean WSL worktree; exit `0`. Upstream deprecation notices were informational. |
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js dist-test/tests/wsl/project-system.test.js` | All three focused task-system files passed; exit `0`. |
+| passed | `npm run check` | Strict main/renderer type checks and all 14 full compiled test files passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Clean production compilation and asset copy completed; exit `0`. |
+| passed | `git diff --check origin/main...HEAD`; ancestry/path/tree audit | No whitespace errors; exactly one scoped task commit; transferred tree matched the locally verified tree byte-for-byte. |
+| constrained | `npm start -- --enable-logging=stderr` bounded WSLg launch | Electron initialized under WSLg. Its persisted Codex thread could not auto-resume because this current Codex session already owned that thread's writer lock; the scoped app process exited and no Electron process remained. Prior same-tree renderer and production launch journeys remain recorded above. |
+
+**Delivery state**
+
+- Pushed `codex/p0-002-structured-tasks-delivery` and opened PR #5: `https://github.com/beautysamurai/workbench/pull/5`.
+- The pull request documents behavior, exact verification, unavailable checks, risks, and excluded user/WB-006 state.
+- Next action: commit and push this delivery record, then require both push- and pull-request-event CI plus automated review on the recorded head. Do not merge without separate user authorization.
 - Blocker: none established.
