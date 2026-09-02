@@ -1579,3 +1579,37 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Review the final scoped diff, commit and push the corrections, reply to and resolve both accepted findings, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 22:41 JST — P0-002 accepted temporary-image installation review finding
+
+**Exact-head review and reproduction**
+
+- Exact head `f565417` passed both workflow events: Linux verification completed in 20 and 26 seconds, and Windows verification/package jobs completed in 1 minute 49 seconds and 1 minute 55 seconds. All 25 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `f565417` and opened one P1 finding: the validated task-image bytes were written to a temporary pathname that was closed before `wc`, `chmod`, and `mv` reopened it, allowing a concurrent workspace process to replace the entry.
+- The finding is accepted. `node /tmp/workbench-p0-temp-race-repro.cjs` deterministically replaces the temporary entry immediately after `cat`. Before the correction, the task succeeded, the final attachment was a symlink to the external file, and that file's mode changed from `0600` to `0644`; `safe` was `false` and the command exited `1`.
+
+**Scoped correction**
+
+- Temporary task-image creation now atomically opens descriptor 3 with no-clobber semantics and keeps it open while stdin is streamed. Byte count, file type, device/inode identity, link count, and mode changes are checked through `/proc/$$/fd/3` rather than reopening the temporary pathname.
+- Final installation creates a no-clobber hard link from the pinned descriptor into the already pinned image directory. The target must identify the same inode, and removing the temporary name must leave exactly one link before the task may commit.
+- A focused WSL regression unlinks the temporary entry and replaces it with an external symlink after `cat` returns. Workbench now rejects the changed inode, removes the replacement link, leaves no final attachment or task entry, preserves the external bytes, and leaves its mode at `0600`.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 17 WSL project-system cases passed, including the deterministic temporary-image replacement; exit `0`. |
+| passed | `node --test dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js dist-test/tests/wsl/project-system.test.js` | Focused parser, renderer task-tree, image validation, and WSL filesystem cases passed; exit `0`. |
+| passed | `node /tmp/workbench-p0-temp-race-repro.cjs` | The exact replacement was rejected with `Task image temporary file changed during writing`; no target existed, the outside mode remained `600`, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `temporaryRaceSafe` and all prior PNG/JPEG/WebP, anchored path, named-parent, metadata-swap, and hard-link checks were true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-temp-handle-profile`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; `pgrep -a -x electron` returned no remaining process. Existing DBus warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Review the final scoped diff, commit and push the correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
+- Blocker: none established.

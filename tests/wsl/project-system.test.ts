@@ -90,7 +90,12 @@ test('allocates increasing ids and persists a structured child with an image byt
     assert.equal(created?.priority, 'P0');
     assert.deepEqual(created?.acceptanceCriteria, ['Image is preserved']);
     assert.deepEqual(created?.attachments, [{ path: '.workbench/task-images/WB-005-01.png', mediaType: 'image/png' }]);
-    assert.deepEqual(fs.readFileSync(path.join(directory, '.workbench/task-images/WB-005-01.png')), Buffer.from(png));
+    const imagePath = path.join(directory, '.workbench/task-images/WB-005-01.png');
+    assert.deepEqual(fs.readFileSync(imagePath), Buffer.from(png));
+    const imageStat = fs.lstatSync(imagePath);
+    assert.equal(imageStat.isFile(), true);
+    assert.equal(imageStat.nlink, 1);
+    assert.equal(imageStat.mode & 0o777, 0o644);
   });
 });
 
@@ -264,6 +269,54 @@ printf '%s\\n' "$resolved"
       else process.env.WORKBENCH_TEST_SWAP_MARKER = oldEnvironment.marker;
       if (oldEnvironment.outside === undefined) delete process.env.WORKBENCH_TEST_IMAGE_OUTSIDE;
       else process.env.WORKBENCH_TEST_IMAGE_OUTSIDE = oldEnvironment.outside;
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('does not follow a temporary image replacement between writing and installation', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-temp-race-outside-'));
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-temp-race-tools-'));
+    const imageDirectory = path.join(directory, '.workbench/task-images');
+    const outsideFile = path.join(outside, 'private.bin');
+    const marker = path.join(toolsDirectory, 'swapped');
+    const catWrapper = path.join(toolsDirectory, 'cat');
+    const png = tinyPng();
+    const outsideBytes = Buffer.alloc(png.length, 0x78);
+    fs.writeFileSync(outsideFile, outsideBytes, { mode: 0o600 });
+    fs.writeFileSync(catWrapper, `#!/bin/bash
+set -u
+actual=/usr/bin/cat
+"$actual" "$@"
+status=$?
+if [ "$status" -eq 0 ] && [ ! -e "${marker}" ] && [ -d "${imageDirectory}" ]; then
+  temporary=$(find "${imageDirectory}" -maxdepth 1 -type f -name '.WB-*' -print -quit)
+  if [ -n "$temporary" ]; then
+    : > "${marker}"
+    rm -f -- "$temporary"
+    ln -s -- "${outsideFile}" "$temporary"
+  fi
+fi
+exit "$status"
+`, { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${toolsDirectory}:${oldPath ?? ''}`;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'Pinned temporary image',
+        priority: 'P1',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: png }],
+      }), /temporary file changed during writing|could not be installed/);
+      assert.equal(fs.existsSync(marker), true, 'The test must replace the temporary image after cat returns.');
+      assert.deepEqual(fs.readFileSync(outsideFile), outsideBytes);
+      assert.equal(fs.statSync(outsideFile).mode & 0o777, 0o600);
+      assert.equal(fs.lstatSync(path.join(imageDirectory, 'WB-001-01.png'), { throwIfNoEntry: false }), undefined);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Pinned temporary image/);
+    } finally {
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
       fs.rmSync(outside, { recursive: true, force: true });
       fs.rmSync(toolsDirectory, { recursive: true, force: true });
     }

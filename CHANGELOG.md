@@ -37,3 +37,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Multiply linked project workflow and task-metadata files are rejected so a workspace hard link cannot redirect reads, appends, or locking to an inode outside the selected workspace.
 - Task-image creation and cleanup operate through a validated Linux directory handle so replacing the checked pathname cannot redirect file operations outside the workspace.
 - Project-task operations pin the workspace root, `TASKS.md`, metadata directory, lock, sequence counter, and image directory to validated Linux handles, preventing a concurrent pathname replacement from redirecting reads or writes outside the selected workspace.
+- Temporary task-image files remain open and identity-checked from byte streaming through mode setting and final installation, so replacing the temporary pathname cannot modify an external file or install unvalidated bytes.
