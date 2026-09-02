@@ -94,6 +94,25 @@ test('allocates increasing ids and persists a structured child with an image byt
   });
 });
 
+test('allows an unambiguous named legacy task to become a parent', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    fs.writeFileSync(path.join(directory, 'TASKS.md'), `# Tasks
+
+### TASK-A — Named legacy task
+
+- **State:** pending
+`, 'utf8');
+    const updated = await addProjectTask(workspace, {
+      title: 'Named child',
+      priority: 'P1',
+      parentId: 'TASK-A',
+    });
+    const child = updated.tasks.find((task) => task.title === 'Named child');
+    assert.equal(child?.parentId, 'TASK-A');
+    assert.equal(updated.tasks.find((task) => task.id === 'TASK-A')?.title, 'Named legacy task');
+  });
+});
+
 test('serializes concurrent additions so automatically assigned ids remain unique', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const [first, second] = await Promise.all([
@@ -208,15 +227,13 @@ test('does not follow an image-directory replacement after validation', async ()
     fs.writeFileSync(realpathWrapper, `#!/bin/bash
 set -eu
 actual=/usr/bin/realpath
-if [ "\${2:-}" = "\${WORKBENCH_TEST_SWAP_IMAGE_DIR:-}" ] && [ ! -e "\${WORKBENCH_TEST_SWAP_MARKER:-}" ]; then
-  resolved=$("$actual" "$@")
+resolved=$("$actual" "$@")
+if [ "$resolved" = "\${WORKBENCH_TEST_SWAP_IMAGE_DIR:-}" ] && [ ! -e "\${WORKBENCH_TEST_SWAP_MARKER:-}" ]; then
   : > "$WORKBENCH_TEST_SWAP_MARKER"
   mv -- "$WORKBENCH_TEST_SWAP_IMAGE_DIR" "$WORKBENCH_TEST_SWAP_IMAGE_DIR-original"
   ln -s -- "$WORKBENCH_TEST_IMAGE_OUTSIDE" "$WORKBENCH_TEST_SWAP_IMAGE_DIR"
-  printf '%s\\n' "$resolved"
-  exit 0
 fi
-exec "$actual" "$@"
+printf '%s\\n' "$resolved"
 `, { mode: 0o755 });
     const oldEnvironment = {
       path: process.env.PATH,
@@ -251,6 +268,169 @@ exec "$actual" "$@"
       fs.rmSync(toolsDirectory, { recursive: true, force: true });
     }
   });
+});
+
+test('does not follow a task-metadata directory replacement after lock validation', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-metadata-race-outside-'));
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-metadata-race-tools-'));
+    const metadataDirectory = path.join(directory, '.workbench');
+    const marker = path.join(toolsDirectory, 'swapped');
+    const statWrapper = path.join(toolsDirectory, 'stat');
+    fs.writeFileSync(statWrapper, `#!/bin/bash
+set -eu
+actual=/usr/bin/stat
+target="\${!#}"
+if [[ "$target" == */task-sequence.lock ]] && [ ! -e "\${WORKBENCH_TEST_SWAP_MARKER:-}" ]; then
+  result=$("$actual" "$@")
+  : > "$WORKBENCH_TEST_SWAP_MARKER"
+  mv -- "$WORKBENCH_TEST_METADATA_DIR" "$WORKBENCH_TEST_METADATA_DIR-original"
+  ln -s -- "$WORKBENCH_TEST_METADATA_OUTSIDE" "$WORKBENCH_TEST_METADATA_DIR"
+  printf '%s\\n' "$result"
+  exit 0
+fi
+exec "$actual" "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      metadataDirectory: process.env.WORKBENCH_TEST_METADATA_DIR,
+      marker: process.env.WORKBENCH_TEST_SWAP_MARKER,
+      outside: process.env.WORKBENCH_TEST_METADATA_OUTSIDE,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_METADATA_DIR = metadataDirectory;
+    process.env.WORKBENCH_TEST_SWAP_MARKER = marker;
+    process.env.WORKBENCH_TEST_METADATA_OUTSIDE = outside;
+    let rejected = false;
+    try {
+      await addProjectTask(workspace, { title: 'Anchored metadata', priority: 'P1' })
+        .catch(() => { rejected = true; });
+      assert.equal(rejected, true, 'The replaced task-metadata path should be rejected before append.');
+      assert.deepEqual(fs.readdirSync(outside), []);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Anchored metadata/);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.metadataDirectory === undefined) delete process.env.WORKBENCH_TEST_METADATA_DIR;
+      else process.env.WORKBENCH_TEST_METADATA_DIR = oldEnvironment.metadataDirectory;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_SWAP_MARKER;
+      else process.env.WORKBENCH_TEST_SWAP_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.outside === undefined) delete process.env.WORKBENCH_TEST_METADATA_OUTSIDE;
+      else process.env.WORKBENCH_TEST_METADATA_OUTSIDE = oldEnvironment.outside;
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('does not follow a TASKS.md replacement after file validation', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-tasks-race-outside-'));
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-tasks-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const outsideTasks = path.join(outside, 'TASKS.md');
+    const outsideContents = '# External tasks\n';
+    const marker = path.join(toolsDirectory, 'swapped');
+    const statWrapper = path.join(toolsDirectory, 'stat');
+    fs.writeFileSync(outsideTasks, outsideContents, 'utf8');
+    fs.writeFileSync(statWrapper, `#!/bin/bash
+set -eu
+actual=/usr/bin/stat
+target="\${!#}"
+if [[ "$target" == */TASKS.md ]] && [ -f "$WORKBENCH_TEST_TASK_ROOT/.workbench/task-sequence" ] && [ ! -e "$WORKBENCH_TEST_SWAP_MARKER" ]; then
+  result=$("$actual" "$@")
+  : > "$WORKBENCH_TEST_SWAP_MARKER"
+  mv -- "$WORKBENCH_TEST_TASK_ROOT/TASKS.md" "$WORKBENCH_TEST_TASK_ROOT/TASKS.md-original"
+  ln -s -- "$WORKBENCH_TEST_TASKS_OUTSIDE" "$WORKBENCH_TEST_TASK_ROOT/TASKS.md"
+  printf '%s\\n' "$result"
+  exit 0
+fi
+exec "$actual" "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      root: process.env.WORKBENCH_TEST_TASK_ROOT,
+      marker: process.env.WORKBENCH_TEST_SWAP_MARKER,
+      outside: process.env.WORKBENCH_TEST_TASKS_OUTSIDE,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_TASK_ROOT = directory;
+    process.env.WORKBENCH_TEST_SWAP_MARKER = marker;
+    process.env.WORKBENCH_TEST_TASKS_OUTSIDE = outsideTasks;
+    let rejected = false;
+    try {
+      await addProjectTask(workspace, { title: 'Anchored task append', priority: 'P1' })
+        .catch(() => { rejected = true; });
+      assert.equal(rejected, true, 'The replaced TASKS.md path should be rejected before append.');
+      assert.equal(fs.readFileSync(outsideTasks, 'utf8'), outsideContents);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md-original'), 'utf8'), /Anchored task append/);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.root === undefined) delete process.env.WORKBENCH_TEST_TASK_ROOT;
+      else process.env.WORKBENCH_TEST_TASK_ROOT = oldEnvironment.root;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_SWAP_MARKER;
+      else process.env.WORKBENCH_TEST_SWAP_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.outside === undefined) delete process.env.WORKBENCH_TEST_TASKS_OUTSIDE;
+      else process.env.WORKBENCH_TEST_TASKS_OUTSIDE = oldEnvironment.outside;
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('does not follow a workspace-root replacement after resolution', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-root-race-'));
+  const originalDirectory = `${directory}-original`;
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-root-race-outside-'));
+  const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-root-race-tools-'));
+  const marker = path.join(toolsDirectory, 'swapped');
+  const realpathWrapper = path.join(toolsDirectory, 'realpath');
+  const workspace: Workspace = {
+    id: 'workspace', name: 'Project', description: '', icon: 'code', distro: 'Local Linux',
+    root: directory, commands: [], contextItems: [],
+    createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+  };
+  fs.writeFileSync(realpathWrapper, `#!/bin/bash
+set -eu
+actual=/usr/bin/realpath
+target="\${!#}"
+resolved=$("$actual" "$@")
+if [ "$target" = "$WORKBENCH_TEST_ROOT_PATH" ] && [ ! -e "$WORKBENCH_TEST_SWAP_MARKER" ]; then
+  : > "$WORKBENCH_TEST_SWAP_MARKER"
+  mv -- "$WORKBENCH_TEST_ROOT_PATH" "$WORKBENCH_TEST_ROOT_PATH-original"
+  ln -s -- "$WORKBENCH_TEST_ROOT_OUTSIDE" "$WORKBENCH_TEST_ROOT_PATH"
+fi
+printf '%s\\n' "$resolved"
+`, { mode: 0o755 });
+  const oldEnvironment = {
+    path: process.env.PATH,
+    root: process.env.WORKBENCH_TEST_ROOT_PATH,
+    marker: process.env.WORKBENCH_TEST_SWAP_MARKER,
+    outside: process.env.WORKBENCH_TEST_ROOT_OUTSIDE,
+  };
+  process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+  process.env.WORKBENCH_TEST_ROOT_PATH = directory;
+  process.env.WORKBENCH_TEST_SWAP_MARKER = marker;
+  process.env.WORKBENCH_TEST_ROOT_OUTSIDE = outside;
+  try {
+    await assert.rejects(initializeProjectSystem(workspace), /Workspace root changed during validation/);
+    assert.deepEqual(fs.readdirSync(outside), []);
+    assert.deepEqual(fs.readdirSync(originalDirectory), []);
+  } finally {
+    if (oldEnvironment.path === undefined) delete process.env.PATH;
+    else process.env.PATH = oldEnvironment.path;
+    if (oldEnvironment.root === undefined) delete process.env.WORKBENCH_TEST_ROOT_PATH;
+    else process.env.WORKBENCH_TEST_ROOT_PATH = oldEnvironment.root;
+    if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_SWAP_MARKER;
+    else process.env.WORKBENCH_TEST_SWAP_MARKER = oldEnvironment.marker;
+    if (oldEnvironment.outside === undefined) delete process.env.WORKBENCH_TEST_ROOT_OUTSIDE;
+    else process.env.WORKBENCH_TEST_ROOT_OUTSIDE = oldEnvironment.outside;
+    fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(originalDirectory, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(toolsDirectory, { recursive: true, force: true });
+  }
 });
 
 test('refuses to follow an unsafe project-file symlink', async () => {

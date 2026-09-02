@@ -91,7 +91,7 @@ A workspace can also point to a research or study folder; it does not need to be
 
 For new coding workspaces, **Set up the Markdown project workflow** is enabled by default. Workbench creates only missing `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` files; it never replaces existing guidance. The dashboard reads tasks from `TASKS.md`, lets you add queue entries through a form, and can place a selected task into the Codex composer.
 
-Workbench assigns new tasks sequential `WB-NNN` IDs independently from their explicit P0–P3 priority. A task can have a parent, acceptance criteria, and up to four pasted, dropped, or selected PNG, JPEG, or WebP reference images. Parent relationships render as a nested queue, while legacy `P0-001`-style IDs remain readable. Images are stored inside the selected workspace at `.workbench/task-images/` and referenced from `TASKS.md`. A small locked `.workbench/task-sequence` counter prevents ID reuse after deletion and coordinates multiple Workbench processes.
+Workbench assigns new tasks sequential `WB-NNN` IDs independently from their explicit P0–P3 priority. A task can have a parent, acceptance criteria, and up to four pasted, dropped, or selected PNG, JPEG, or WebP reference images. Parent relationships render as a nested queue, while arbitrary existing non-placeholder task IDs remain readable and can be selected as parents when unambiguous. Images are stored inside the selected workspace at `.workbench/task-images/` and referenced from `TASKS.md`. A small locked `.workbench/task-sequence` counter prevents ID reuse after deletion and coordinates multiple Workbench processes.
 
 ## How Codex integration works
 
@@ -138,7 +138,7 @@ Workbench deliberately starts conservatively:
 - Network access for sandboxed Codex commands is off by default.
 - Approval policy defaults to **Ask when needed** (`on-request` in the Codex app-server protocol).
 - Context files must lexically and physically resolve under the workspace root; symlink escapes are rejected.
-- Task reference images are size-, structure-, and compressed-data-checked at the main-process boundary, decoded under explicit time/memory/pixel limits where required, streamed without shell interpolation, and written only under the workspace's checked `.workbench/task-images/` directory.
+- Project-task reads, appends, metadata, and image writes use validated Linux filesystem handles so replacing a checked workspace pathname cannot redirect them; reference images are also size-, structure-, and compressed-data-checked at the main-process boundary, decoded under explicit time/memory/pixel limits where required, and streamed without shell interpolation.
 - Renderer code has no Node.js access. Electron runs with context isolation, renderer sandboxing, and a narrow preload bridge.
 - External links are opened in the system browser rather than inside the privileged application window.
 - The embedded terminal is an explicit user-controlled process and runs outside the Codex sandbox, just like a normal WSL terminal.

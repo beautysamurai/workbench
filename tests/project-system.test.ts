@@ -343,7 +343,7 @@ test('preserves legacy random task ids and allows new children to reference them
 });
 
 test('keeps arbitrary legacy task ids visible while ignoring template placeholders', () => {
-  const tasks = parseProjectTasks(`### TASK-A — Named legacy task
+  const markdown = `### TASK-A — Named legacy task
 
 - **State:** pending
 
@@ -358,9 +358,21 @@ test('keeps arbitrary legacy task ids visible while ignoring template placeholde
 ### P?-NNN — Template placeholder
 
 - **State:** pending
-`);
+`;
+  const tasks = parseProjectTasks(markdown);
   assert.deepEqual(tasks.map((task) => task.id), ['TASK-A', 'a50e8400-e29b-41d4-a716-446655440000']);
   assert.equal(nextProjectTaskId(tasks), 'WB-001');
+  const child = formatProjectTask({
+    title: 'Named child',
+    priority: 'P1',
+    parentId: 'TASK-A',
+  }, 'WB-001');
+  assert.equal(parseProjectTasks(`${markdown}\n${child}`).at(-1)?.parentId, 'TASK-A');
+  assert.throws(() => formatProjectTask({
+    title: 'Template child',
+    priority: 'P1',
+    parentId: 'WB-NNN',
+  }, 'WB-001'), /Parent task id is invalid/);
 });
 
 test('only parses parent and attachment metadata from their top-level fields', () => {

@@ -140,7 +140,7 @@ export function parseProjectTasks(markdown: string): ProjectTask[] {
       state: normalizeTaskState(state),
       priority: normalizeTaskPriority(priority, id),
       objective: cleanSingleLine(objective, 500),
-      parentId: isProjectTaskId(parentId) ? parentId : null,
+      parentId: isVisibleProjectTaskId(parentId) ? parentId : null,
       acceptanceCriteria: parseAcceptanceCriteria(block),
       attachments: parseAttachments(block),
     };
@@ -197,7 +197,7 @@ export function formatProjectTask(
   const criteria = cleanCriteria(task.acceptanceCriteria);
   if (!title) throw new Error('Enter a task title.');
   if (!isProjectTaskId(id)) throw new Error('Task id is invalid.');
-  if (parentId && !isProjectTaskId(parentId)) throw new Error('Parent task id is invalid.');
+  if (parentId && !isVisibleProjectTaskId(parentId)) throw new Error('Parent task id is invalid.');
   const lines = [
     `### ${id} — ${title}`,
     '',
@@ -895,6 +895,12 @@ function rootSetup(workspace: Workspace): string[] {
     `root=${shellQuote(workspace.root)}`,
     'root_real=$(realpath -- "$root") || { printf "Workspace root not found" >&2; exit 2; }',
     'if [ ! -d "$root_real" ]; then printf "Workspace root is not a directory" >&2; exit 2; fi',
+    'root_identity=$(stat -Lc "%d:%i" -- "$root" 2>/dev/null) || { printf "Workspace root is unsafe" >&2; exit 2; }',
+    'exec 5< "$root" || { printf "Workspace root cannot be opened" >&2; exit 2; }',
+    'root_fd="/proc/$$/fd/5"',
+    'opened_root_real=$(realpath -- "$root_fd") || { printf "Workspace root handle cannot be resolved" >&2; exit 2; }',
+    'opened_root_identity=$(stat -Lc "%d:%i" -- "$root_fd" 2>/dev/null) || { printf "Workspace root is unsafe" >&2; exit 2; }',
+    'if [ ! -d "$root_fd" ] || [ "$opened_root_real" != "$root_real" ] || [ "$opened_root_identity" != "$root_identity" ]; then printf "Workspace root changed during validation" >&2; exit 2; fi',
   ];
 }
 
@@ -912,9 +918,31 @@ async function runProjectScript(workspace: Workspace, statements: string[], inpu
   return result.stdout;
 }
 
+function projectTasksFileHandleStatements(mode: 'read' | 'append'): string[] {
+  const descriptor = 4;
+  return [
+    'target="$root_fd/TASKS.md"',
+    mode === 'read'
+      ? 'if [ ! -e "$target" ] && [ ! -L "$target" ]; then exit 0; fi'
+      : 'if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf "TASKS.md does not exist" >&2; exit 3; fi',
+    'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); else target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }; fi',
+    'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
+    'if [ ! -f "$target" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
+    'target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md is unsafe" >&2; exit 4; }',
+    mode === 'read'
+      ? `exec ${descriptor}< "$target" || { printf "TASKS.md cannot be opened" >&2; exit 4; }`
+      : `exec ${descriptor}>> "$target" || { printf "TASKS.md cannot be opened" >&2; exit 4; }`,
+    `target_fd="/proc/$$/fd/${descriptor}"`,
+    'opened_target_real=$(realpath -- "$target_fd") || { printf "TASKS.md handle cannot be resolved" >&2; exit 4; }',
+    'opened_target_identity=$(stat -Lc "%d:%i" -- "$target_fd" 2>/dev/null) || { printf "TASKS.md is unsafe" >&2; exit 4; }',
+    'if [ "$opened_target_real" != "$target_real" ] || [ "$opened_target_identity" != "$target_identity" ]; then printf "TASKS.md changed during validation" >&2; exit 4; fi',
+    'if [ ! -f "$target_fd" ] || [ "$(stat -Lc %h -- "$target_fd" 2>/dev/null)" != 1 ]; then printf "TASKS.md is multiply linked" >&2; exit 4; fi',
+  ];
+}
+
 async function inspectFiles(workspace: Workspace): Promise<ProjectSystemFile[]> {
   const statements = PROJECT_FILES.flatMap((name) => [
-    `target="$root_real/${name}"`,
+    `target="$root_fd/${name}"`,
     `if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf '${name}\\tmissing\\n'; else target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) if [ -f "$target_real" ] && [ "$(stat -c %h -- "$target_real" 2>/dev/null)" = 1 ]; then printf '${name}\\tpresent\\n'; else printf '${name}\\tunsafe\\n'; fi ;; *) printf '${name}\\tunsafe\\n' ;; esac; fi`,
   ]);
   const output = await runProjectScript(workspace, statements);
@@ -928,13 +956,8 @@ async function inspectFiles(workspace: Workspace): Promise<ProjectSystemFile[]> 
 
 async function readTasks(workspace: Workspace): Promise<string> {
   return runProjectScript(workspace, [
-    'target="$root_real/TASKS.md"',
-    'if [ ! -e "$target" ]; then exit 0; fi',
-    'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
-    'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
-    'if [ ! -f "$target_real" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
-    'if [ "$(stat -c %h -- "$target_real" 2>/dev/null)" != 1 ]; then printf "TASKS.md is multiply linked" >&2; exit 4; fi',
-    'cat -- "$target_real"',
+    ...projectTasksFileHandleStatements('read'),
+    'cat -- "$target_fd"',
   ]);
 }
 
@@ -951,18 +974,20 @@ function parseProjectTaskHighWater(value: string): number {
 
 async function readProjectTaskHighWater(workspace: Workspace): Promise<number> {
   const output = await runProjectScript(workspace, [
-    'workbench_dir="$root_real/.workbench"',
-    'if [ ! -e "$workbench_dir" ] && [ ! -L "$workbench_dir" ]; then exit 0; fi',
-    'if [ -L "$workbench_dir" ] || [ ! -d "$workbench_dir" ]; then printf "Task metadata directory is unsafe" >&2; exit 6; fi',
-    'workbench_dir_real=$(realpath -- "$workbench_dir") || { printf "Task metadata directory cannot be resolved" >&2; exit 6; }',
-    'case "$workbench_dir_real" in "$root_real"/*) ;; *) printf "Task metadata directory resolves outside the workspace" >&2; exit 6 ;; esac',
-    'counter="$workbench_dir_real/task-sequence"',
+    ...projectWorkbenchDirectoryStatements(false),
+    'counter="$workbench_dir_fd/task-sequence"',
     'if [ ! -e "$counter" ] && [ ! -L "$counter" ]; then exit 0; fi',
     'if [ -L "$counter" ] || [ ! -f "$counter" ]; then printf "Task id sequence is unsafe" >&2; exit 6; fi',
     'counter_real=$(realpath -- "$counter") || { printf "Task id sequence cannot be resolved" >&2; exit 6; }',
     'case "$counter_real" in "$root_real"/*) ;; *) printf "Task id sequence resolves outside the workspace" >&2; exit 6 ;; esac',
-    'if [ "$(stat -c %h -- "$counter_real" 2>/dev/null)" != 1 ]; then printf "Task id sequence is multiply linked" >&2; exit 6; fi',
-    'cat -- "$counter_real"',
+    'counter_identity=$(stat -Lc "%d:%i" -- "$counter" 2>/dev/null) || { printf "Task id sequence is unsafe" >&2; exit 6; }',
+    'exec 6< "$counter" || { printf "Task id sequence cannot be opened" >&2; exit 6; }',
+    'counter_fd="/proc/$$/fd/6"',
+    'opened_counter_real=$(realpath -- "$counter_fd") || { printf "Task id sequence handle cannot be resolved" >&2; exit 6; }',
+    'opened_counter_identity=$(stat -Lc "%d:%i" -- "$counter_fd" 2>/dev/null) || { printf "Task id sequence is unsafe" >&2; exit 6; }',
+    'if [ "$opened_counter_real" != "$counter_real" ] || [ "$opened_counter_identity" != "$counter_identity" ]; then printf "Task id sequence changed during validation" >&2; exit 6; fi',
+    'if [ ! -f "$counter_fd" ] || [ "$(stat -Lc %h -- "$counter_fd" 2>/dev/null)" != 1 ]; then printf "Task id sequence is multiply linked" >&2; exit 6; fi',
+    'cat -- "$counter_fd"',
   ]);
   return parseProjectTaskHighWater(output);
 }
@@ -979,7 +1004,7 @@ export async function initializeProjectSystem(workspace: Workspace): Promise<Pro
   const statements: string[] = [];
   for (const name of PROJECT_FILES) {
     statements.push(
-      `target="$root_real/${name}"`,
+      `target="$root_fd/${name}"`,
       'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) ;; *) printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4 ;; esac; fi',
       'if [ -e "$target" ] && [ ! -f "$target" ]; then printf "Project workflow path is not a regular file: %s" "$target" >&2; exit 4; fi',
       `if [ ! -e "$target" ] && [ ! -L "$target" ]; then (umask 022; set -C; printf %s ${shellQuote(PROJECT_TEMPLATES[name])} > "$target") 2>/dev/null || true; fi`,
@@ -994,13 +1019,21 @@ export async function initializeProjectSystem(workspace: Workspace): Promise<Pro
   return inspectProjectSystem(workspace);
 }
 
-function projectWorkbenchDirectoryStatements(): string[] {
+function projectWorkbenchDirectoryStatements(createIfMissing = true): string[] {
   return [
-    'workbench_dir="$root_real/.workbench"',
-    'if [ -L "$workbench_dir" ]; then printf "Refusing unsafe task metadata directory" >&2; exit 6; elif [ -e "$workbench_dir" ] && [ ! -d "$workbench_dir" ]; then printf "Task metadata path is not a directory" >&2; exit 6; elif [ ! -e "$workbench_dir" ]; then mkdir -- "$workbench_dir" 2>/dev/null || true; fi',
+    'workbench_dir="$root_fd/.workbench"',
+    createIfMissing
+      ? 'if [ -L "$workbench_dir" ]; then printf "Refusing unsafe task metadata directory" >&2; exit 6; elif [ -e "$workbench_dir" ] && [ ! -d "$workbench_dir" ]; then printf "Task metadata path is not a directory" >&2; exit 6; elif [ ! -e "$workbench_dir" ]; then mkdir -- "$workbench_dir" 2>/dev/null || true; fi'
+      : 'if [ -L "$workbench_dir" ]; then printf "Refusing unsafe task metadata directory" >&2; exit 6; elif [ -e "$workbench_dir" ] && [ ! -d "$workbench_dir" ]; then printf "Task metadata path is not a directory" >&2; exit 6; elif [ ! -e "$workbench_dir" ]; then exit 0; fi',
     'if [ -L "$workbench_dir" ] || [ ! -d "$workbench_dir" ]; then printf "Task metadata directory is unsafe" >&2; exit 6; fi',
     'workbench_dir_real=$(realpath -- "$workbench_dir") || { printf "Task metadata directory cannot be resolved" >&2; exit 6; }',
     'case "$workbench_dir_real" in "$root_real"/*) ;; *) printf "Task metadata directory resolves outside the workspace" >&2; exit 6 ;; esac',
+    'workbench_dir_identity=$(stat -Lc "%d:%i" -- "$workbench_dir" 2>/dev/null) || { printf "Task metadata directory is unsafe" >&2; exit 6; }',
+    'exec 7< "$workbench_dir" || { printf "Task metadata directory cannot be opened" >&2; exit 6; }',
+    'workbench_dir_fd="/proc/$$/fd/7"',
+    'opened_workbench_dir_real=$(realpath -- "$workbench_dir_fd") || { printf "Task metadata directory handle cannot be resolved" >&2; exit 6; }',
+    'opened_workbench_dir_identity=$(stat -Lc "%d:%i" -- "$workbench_dir_fd" 2>/dev/null) || { printf "Task metadata directory is unsafe" >&2; exit 6; }',
+    'if [ ! -d "$workbench_dir_fd" ] || [ "$opened_workbench_dir_real" != "$workbench_dir_real" ] || [ "$opened_workbench_dir_identity" != "$workbench_dir_identity" ]; then printf "Task metadata directory changed during validation" >&2; exit 6; fi',
   ];
 }
 
@@ -1008,14 +1041,19 @@ function projectTaskLockStatements(): string[] {
   return [
     ...projectWorkbenchDirectoryStatements(),
     'command -v flock >/dev/null 2>&1 || { printf "Workspace task locking requires flock" >&2; exit 9; }',
-    'lock_file="$workbench_dir_real/task-sequence.lock"',
+    'lock_file="$workbench_dir_fd/task-sequence.lock"',
     'if [ -L "$lock_file" ] || { [ -e "$lock_file" ] && [ ! -f "$lock_file" ]; }; then printf "Task id lock is unsafe" >&2; exit 9; fi',
     'if [ ! -e "$lock_file" ]; then (umask 077; set -C; : > "$lock_file") 2>/dev/null || true; fi',
     'if [ -L "$lock_file" ] || [ ! -f "$lock_file" ]; then printf "Task id lock is unsafe" >&2; exit 9; fi',
     'lock_real=$(realpath -- "$lock_file") || { printf "Task id lock cannot be resolved" >&2; exit 9; }',
     'case "$lock_real" in "$root_real"/*) ;; *) printf "Task id lock resolves outside the workspace" >&2; exit 9 ;; esac',
-    'if [ "$(stat -c %h -- "$lock_real" 2>/dev/null)" != 1 ]; then printf "Task id lock is multiply linked" >&2; exit 9; fi',
-    'exec 9<> "$lock_real" || { printf "Task id lock cannot be opened" >&2; exit 9; }',
+    'lock_identity=$(stat -Lc "%d:%i" -- "$lock_file" 2>/dev/null) || { printf "Task id lock is unsafe" >&2; exit 9; }',
+    'exec 9<> "$lock_file" || { printf "Task id lock cannot be opened" >&2; exit 9; }',
+    'lock_fd="/proc/$$/fd/9"',
+    'opened_lock_real=$(realpath -- "$lock_fd") || { printf "Task id lock handle cannot be resolved" >&2; exit 9; }',
+    'opened_lock_identity=$(stat -Lc "%d:%i" -- "$lock_fd" 2>/dev/null) || { printf "Task id lock is unsafe" >&2; exit 9; }',
+    'if [ "$opened_lock_real" != "$lock_real" ] || [ "$opened_lock_identity" != "$lock_identity" ]; then printf "Task id lock changed during validation" >&2; exit 9; fi',
+    'if [ ! -f "$lock_fd" ] || [ "$(stat -Lc %h -- "$lock_fd" 2>/dev/null)" != 1 ]; then printf "Task id lock is multiply linked" >&2; exit 9; fi',
     'flock -w 10 -x 9 || { printf "Timed out waiting for the workspace task lock" >&2; exit 9; }',
   ];
 }
@@ -1023,15 +1061,17 @@ function projectTaskLockStatements(): string[] {
 function projectImageDirectoryStatements(): string[] {
   return [
     ...projectWorkbenchDirectoryStatements(),
-    'image_dir="$workbench_dir_real/task-images"',
+    'image_dir="$workbench_dir_fd/task-images"',
     'if [ -L "$image_dir" ]; then printf "Refusing unsafe task-image directory" >&2; exit 6; elif [ -e "$image_dir" ] && [ ! -d "$image_dir" ]; then printf "Task-image path is not a directory" >&2; exit 6; elif [ ! -e "$image_dir" ]; then mkdir -- "$image_dir" 2>/dev/null || true; fi',
     'if [ -L "$image_dir" ] || [ ! -d "$image_dir" ]; then printf "Task-image directory is unsafe" >&2; exit 6; fi',
     'image_dir_real=$(realpath -- "$image_dir") || { printf "Task-image directory cannot be resolved" >&2; exit 6; }',
     'case "$image_dir_real" in "$root_real"/*) ;; *) printf "Task-image directory resolves outside the workspace" >&2; exit 6 ;; esac',
-    'exec 8< "$image_dir_real" || { printf "Task-image directory cannot be opened" >&2; exit 6; }',
+    'image_dir_identity=$(stat -Lc "%d:%i" -- "$image_dir" 2>/dev/null) || { printf "Task-image directory is unsafe" >&2; exit 6; }',
+    'exec 8< "$image_dir" || { printf "Task-image directory cannot be opened" >&2; exit 6; }',
     'image_dir_fd="/proc/$$/fd/8"',
     'opened_image_dir_real=$(realpath -- "$image_dir_fd") || { printf "Task-image directory handle cannot be resolved" >&2; exit 6; }',
-    'if [ "$opened_image_dir_real" != "$image_dir_real" ]; then printf "Task-image directory changed during validation" >&2; exit 6; fi',
+    'opened_image_dir_identity=$(stat -Lc "%d:%i" -- "$image_dir_fd" 2>/dev/null) || { printf "Task-image directory is unsafe" >&2; exit 6; }',
+    'if [ ! -d "$image_dir_fd" ] || [ "$opened_image_dir_real" != "$image_dir_real" ] || [ "$opened_image_dir_identity" != "$image_dir_identity" ]; then printf "Task-image directory changed during validation" >&2; exit 6; fi',
   ];
 }
 
@@ -1039,18 +1079,17 @@ async function reserveProjectTaskId(workspace: Workspace, tasks: ProjectTask[]):
   const minimum = Number(/-(\d+)$/.exec(nextProjectTaskId(tasks))?.[1] ?? 1);
   const output = await runProjectScript(workspace, [
     ...projectTaskLockStatements(),
-    'counter="$workbench_dir_real/task-sequence"',
+    'counter="$workbench_dir_fd/task-sequence"',
     'if [ -L "$counter" ] || { [ -e "$counter" ] && [ ! -f "$counter" ]; }; then printf "Task id sequence is unsafe" >&2; exit 9; fi',
-    'if [ -f "$counter" ] && [ "$(stat -c %h -- "$counter" 2>/dev/null)" != 1 ]; then printf "Task id sequence is multiply linked" >&2; exit 9; fi',
     'sequence=0',
-    'if [ -f "$counter" ]; then sequence=$(cat -- "$counter"); fi',
+    'if [ -f "$counter" ]; then counter_real=$(realpath -- "$counter") || { printf "Task id sequence cannot be resolved" >&2; exit 9; }; case "$counter_real" in "$root_real"/*) ;; *) printf "Task id sequence resolves outside the workspace" >&2; exit 9 ;; esac; counter_identity=$(stat -Lc "%d:%i" -- "$counter" 2>/dev/null) || { printf "Task id sequence is unsafe" >&2; exit 9; }; exec 6< "$counter" || { printf "Task id sequence cannot be opened" >&2; exit 9; }; counter_fd="/proc/$$/fd/6"; opened_counter_real=$(realpath -- "$counter_fd") || { printf "Task id sequence handle cannot be resolved" >&2; exit 9; }; opened_counter_identity=$(stat -Lc "%d:%i" -- "$counter_fd" 2>/dev/null) || { printf "Task id sequence is unsafe" >&2; exit 9; }; if [ "$opened_counter_real" != "$counter_real" ] || [ "$opened_counter_identity" != "$counter_identity" ]; then printf "Task id sequence changed during validation" >&2; exit 9; fi; if [ ! -f "$counter_fd" ] || [ "$(stat -Lc %h -- "$counter_fd" 2>/dev/null)" != 1 ]; then printf "Task id sequence is multiply linked" >&2; exit 9; fi; sequence=$(cat -- "$counter_fd"); fi',
     'case "$sequence" in ""|*[!0-9]*) printf "Task id sequence is corrupt" >&2; exit 9 ;; esac',
     'if [ "${#sequence}" -gt 16 ]; then printf "Task id sequence is exhausted" >&2; exit 9; fi',
     `minimum=${minimum}`,
     'next="$minimum"',
     'if [ "$sequence" -ge "$next" ]; then next=$((sequence + 1)); fi',
     'if [ "$next" -ge 9007199254740991 ]; then printf "Task id sequence is exhausted" >&2; exit 9; fi',
-    'temporary="$workbench_dir_real/.task-sequence.$$"',
+    'temporary="$workbench_dir_fd/.task-sequence.$$"',
     'trap \'rm -f -- "$temporary"\' EXIT',
     'if ! (umask 077; set -C; printf "%s\\n" "$next" > "$temporary") 2>/dev/null; then printf "Task id sequence could not be reserved" >&2; exit 9; fi',
     'mv -fT -- "$temporary" "$counter" || { printf "Task id sequence could not be updated" >&2; exit 9; }',
@@ -1150,13 +1189,9 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     }
     await runProjectScript(workspace, [
       ...projectTaskLockStatements(),
-      'target="$root_real/TASKS.md"',
-      'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
-      'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
-      'if [ ! -f "$target_real" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
-      'if [ "$(stat -c %h -- "$target_real" 2>/dev/null)" != 1 ]; then printf "TASKS.md is multiply linked" >&2; exit 4; fi',
-      `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_real"; then printf "Task id already exists" >&2; exit 5; fi`,
-      `printf '\\n%s\\n' ${shellQuote(task)} >> "$target_real"`,
+      ...projectTasksFileHandleStatements('append'),
+      `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_fd"; then printf "Task id already exists" >&2; exit 5; fi`,
+      `printf '\\n%s\\n' ${shellQuote(task)} >&4`,
     ]);
   } catch (error) {
     try {

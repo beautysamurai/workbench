@@ -1545,3 +1545,37 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Review the scoped diff, commit and push both corrections, resolve both accepted findings with exact evidence, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 22:12 JST — P0-002 accepted metadata-anchor and legacy-parent review findings
+
+**Exact-head review and reproduction**
+
+- Exact head `e0dace1` passed both workflow events: both Linux verification jobs completed in 17 seconds, and Windows verification/package jobs completed in 1 minute 50 seconds and 1 minute 52 seconds. All 23 prior review threads were resolved.
+- Automated Codex review completed on `e0dace1` and opened two findings: P1 because `.workbench` could be replaced after validation and redirect the lock/counter operations, and P2 because a retained arbitrary legacy task exposed an Add subtask action whose parent ID the main process rejected.
+- Both findings are accepted. `node /tmp/workbench-p0-review-repro.cjs` reproduced the pre-fix boundary behavior with exit `1`: the operation rejected only after creating external `task-sequence` and `task-sequence.lock` files, while a child of `TASK-A` rejected with `Parent task id is invalid.`
+- Final-diff reflection found the same pathname race on the selected workspace root and `TASKS.md` read/append paths, so those members of the same trust boundary were included rather than leaving equivalent external-write paths behind.
+
+**Scoped correction**
+
+- Each project operation now pins the workspace root and metadata directory, opens `TASKS.md`, the lock, sequence counter, and image directory through dedicated Linux descriptors, and verifies canonical path plus device/inode identity after opening. Regular-file/directory and single-link checks apply to the opened objects before use.
+- Task reads and appends, lock acquisition, sequence reads and atomic replacement, image creation/rename, and cleanup all use `/proc` descriptor paths. Deterministic wrappers replace the root, task file, metadata directory, or image directory at each former validation gap; all now reject without writing to the replacement target.
+- Parsing and formatting now retain arbitrary non-placeholder parent IDs. The existing-chain check still requires exactly one matching task with a valid acyclic ancestry, so named and UUID-style legacy tasks can be real parents without allowing missing, duplicate, cyclic, or template-placeholder parents.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests` then `node --test dist-test/tests/project-system.test.js dist-test/tests/wsl/project-system.test.js` | Focused parser, named-parent, root/task/metadata/image replacement, hard-link, append, concurrency, and image cases passed; exit `0`. |
+| passed | `node /tmp/workbench-p0-review-repro.cjs` | The exact metadata reproducer rejected with no external entries and the named child was accepted; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; real anchored image/task creation, named-parent creation, metadata-swap rejection, hard-link rejection, and all prior PNG/JPEG/WebP cases passed; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-final-handle-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; `pgrep -a -x electron` returned no remaining process. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Review the final scoped diff, commit and push the corrections, reply to and resolve both accepted findings, then require fresh CI and exact-head automated review.
+- Blocker: none established.
