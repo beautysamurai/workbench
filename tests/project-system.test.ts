@@ -110,6 +110,11 @@ function tinyWebp(): Uint8Array {
   return Uint8Array.from(Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
 }
 
+function compressibleLosslessWebp(): Uint8Array {
+  // Deterministic 2048x2048 transparent lossless image encoded by libwebp in 216 bytes.
+  return Uint8Array.from(Buffer.from('UklGRtAAAABXRUJQVlA4TMQAAAAv/8f/EQcQEREQEiT+/24mov8Z//nPf/7zn//85z//+c9//vOf//znP//5z3/+85///Oc///nPf/7zn//85z//+c9//vOf//znP//5z3/+85///Oc///nPf/7zn//85z//+c9//vOf//znP//5z3/+85///Oc///nPf/7zn//85z//+c9//vOf//znP//5z3/+85///Oc///nPf/7zn//85z//+c9//vOf//znP//5z3/+85///Oc///nPf/7zn//85/8e', 'base64'));
+}
+
 function transformedLosslessWebp(): Uint8Array {
   // Deterministic 17x9 RGBA fixture with a predictor transform and nontrivial prefix codes.
   return Uint8Array.from(Buffer.from('UklGRrAAAABXRUJQVlA4TKQAAAAvEAACEJkKRPQ/NhHR/4CDSJIU6ZiZ4f/Tv9CPtaCgbRs5tHuNIm4iSRaV/z8g4eloCcRPAjESTsdJIEbCi5GwOp4EkgFUm7YBszn1kGgf40wjjzLqbLOPMeZYc88z7njjmxIJIJAEAsi/P6BRSKRRCKRTCKBTCQgyAUBnZ2JhoJJAY2NmZaAQGGQSAwsalYQgEwA0dma+eOCNX5754I8XVkYKAQ==', 'base64'));
@@ -128,6 +133,11 @@ function losslessWebpWithUnusedSimpleSymbol(): Uint8Array {
 function tinyLossyWebp(): Uint8Array {
   // Official libwebp-test-data small_1x1.webp fixture.
   return Uint8Array.from(Buffer.from('UklGRlYAAABXRUJQVlA4IDoAAADwAgCdASoBAAEAAEcIhYWIhYSIAgICdaoD+AP6Ag1NGAD+/vNYf/5gZt2KO//mBv/80F4SW6//zLwASUNNVAgAAAB0ZXN0MXgxAA==', 'base64'));
+}
+
+function alphaLossyWebp(): Uint8Array {
+  // Deterministic 2x2 lossy image with a compressed ALPH chunk, encoded by libwebp.
+  return Uint8Array.from(Buffer.from('UklGRmgAAABXRUJQVlA4WAoAAAAQAAAAAQAAAQAAQUxQSAUAAAAAAECA/wBWUDggPAAAAPABAJ0BKgIAAgACADQlmAJ0ugADCQb9SAD+9Bfrd6pLfv/mw6oy4HOCDoAujj/q7E+FCCfoUbKJfMAAAA==', 'base64'));
 }
 
 function patternedLossyWebp(): Uint8Array {
@@ -191,6 +201,16 @@ function webpChunk(type: string, payload: Uint8Array): Buffer {
   return chunk;
 }
 
+function webpContainer(chunks: Uint8Array[]): Uint8Array {
+  const payload = Buffer.concat(chunks);
+  const bytes = Buffer.alloc(12 + payload.length);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WEBP', 8, 'ascii');
+  bytes.set(payload, 12);
+  return bytes;
+}
+
 function animatedTinyWebp(
   canvasWidth = 1,
   canvasHeight = 1,
@@ -208,16 +228,53 @@ function animatedTinyWebp(
   frameHeader.writeUIntLE(frameX / 2, 0, 3);
   frameHeader.writeUIntLE(frameY / 2, 3, 3);
   const frame = Buffer.concat([frameHeader, tinyWebp().slice(12)]);
-  const chunks = Buffer.concat([
+  return webpContainer([
     ...(includeCanvas ? [webpChunk('VP8X', canvas)] : []),
     webpChunk('ANIM', Buffer.alloc(6)),
     webpChunk('ANMF', frame),
   ]);
-  const bytes = Buffer.alloc(12 + chunks.length);
-  bytes.write('RIFF', 0, 'ascii');
-  bytes.writeUInt32LE(bytes.length - 8, 4);
-  bytes.write('WEBP', 8, 'ascii');
-  bytes.set(chunks, 12);
+}
+
+function animatedAlphaWebp(): Uint8Array {
+  const alpha = Buffer.from(alphaLossyWebp());
+  const canvas = Buffer.from(alpha.subarray(20, 30));
+  canvas[0] |= 0x02;
+  const frameHeader = Buffer.alloc(16);
+  frameHeader.writeUIntLE(1, 6, 3);
+  frameHeader.writeUIntLE(1, 9, 3);
+  return webpContainer([
+    webpChunk('VP8X', canvas),
+    webpChunk('ANIM', Buffer.alloc(6)),
+    webpChunk('ANMF', Buffer.concat([frameHeader, alpha.subarray(30)])),
+  ]);
+}
+
+function lossyWebpWithAlphaPayload(payload: Uint8Array): Uint8Array {
+  const lossy = Buffer.from(tinyLossyWebp());
+  const vp8Length = lossy.readUInt32LE(16);
+  const canvas = Buffer.alloc(10);
+  canvas[0] = 0x10;
+  return webpContainer([
+    webpChunk('VP8X', canvas),
+    webpChunk('ALPH', payload),
+    lossy.subarray(12, 20 + vp8Length + (vp8Length % 2)),
+  ]);
+}
+
+function animatedWebpWithAlphaPayload(payload: Uint8Array): Uint8Array {
+  const alpha = Buffer.from(lossyWebpWithAlphaPayload(payload));
+  const canvas = Buffer.from(alpha.subarray(20, 30));
+  canvas[0] |= 0x02;
+  return webpContainer([
+    webpChunk('VP8X', canvas),
+    webpChunk('ANIM', Buffer.alloc(6)),
+    webpChunk('ANMF', Buffer.concat([Buffer.alloc(16), alpha.subarray(30)])),
+  ]);
+}
+
+function losslessWebpWithDimensions(width: number, height: number): Uint8Array {
+  const bytes = Buffer.from(tinyWebp());
+  bytes.writeUInt32LE(((width - 1) | ((height - 1) << 14)) >>> 0, 21);
   return bytes;
 }
 
@@ -288,12 +345,16 @@ test('validates supported image bytes before workspace filesystem writes', async
   assert.equal((await validateProjectTaskImage({ bytes: splitImageDataPng() })).mediaType, 'image/png');
   assert.equal((await validateProjectTaskImage({ bytes: tinyJpeg() })).mediaType, 'image/jpeg');
   assert.equal((await validateProjectTaskImage({ bytes: tinyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: compressibleLosslessWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: losslessWebpWithDimensions(8192, 4882) })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: transformedLosslessWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: losslessWebpWithUnusedSimpleSymbol() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: tinyLossyWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: patternedLossyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: alphaLossyWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: extendedTinyWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: animatedTinyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: animatedAlphaWebp() })).mediaType, 'image/webp');
 });
 
 test('rejects JPEGs without decodable tables, scans, and encoded image data', async () => {
@@ -308,13 +369,20 @@ test('rejects JPEGs without decodable tables, scans, and encoded image data', as
   await assert.rejects(validateProjectTaskImage({ bytes: tinyJpeg().slice(0, -1) }), /PNG, JPEG, or WebP/);
 });
 
-test('bounds concurrent compressed-image decoding', async () => {
-  const outcomes = await Promise.allSettled(
+test('bounds concurrent JPEG and lossless WebP decoding', async () => {
+  const jpegOutcomes = await Promise.allSettled(
     Array.from({ length: 9 }, () => validateProjectTaskImage({ bytes: tinyJpeg() })),
   );
-  assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 8);
-  const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
-  assert.match(String(rejected?.status === 'rejected' ? rejected.reason : ''), /Too many task images/);
+  assert.equal(jpegOutcomes.filter((outcome) => outcome.status === 'fulfilled').length, 8);
+  const rejectedJpeg = jpegOutcomes.find((outcome) => outcome.status === 'rejected');
+  assert.match(String(rejectedJpeg?.status === 'rejected' ? rejectedJpeg.reason : ''), /Too many task images/);
+
+  const losslessOutcomes = await Promise.allSettled(
+    Array.from({ length: 9 }, () => validateProjectTaskImage({ bytes: tinyWebp() })),
+  );
+  assert.equal(losslessOutcomes.filter((outcome) => outcome.status === 'fulfilled').length, 8);
+  const rejectedLossless = losslessOutcomes.find((outcome) => outcome.status === 'rejected');
+  assert.match(String(rejectedLossless?.status === 'rejected' ? rejectedLossless.reason : ''), /Too many task images/);
 });
 
 test('rejects PNGs without image data or with corrupted chunk data', async () => {
@@ -383,6 +451,8 @@ test('rejects malformed WebP chunks, corrupt VP8 partitions, and oversized bytes
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag((49 << 5) | 0x10) }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptFirstPartition() }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptTokenPartition() }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithAlphaPayload(new Uint8Array()) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: animatedWebpWithAlphaPayload(new Uint8Array()) }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: animatedTinyWebp(1, 1, 2) }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: animatedTinyWebp(1, 1, 0, 0, false) }), /PNG, JPEG, or WebP/);
 

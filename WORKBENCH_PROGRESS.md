@@ -1408,3 +1408,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push the correction, reply to and resolve both review findings with exact commit evidence, then require fresh CI and automated review on the new head before closing PR #5 delivery.
 - Blocker: none established.
+
+### 2026-09-02 20:45 JST — P0-002 accepted WebP alpha and lossless-worker review findings
+
+**Exact-head review evidence and reproduction**
+
+- Exact head `b2d0cea` passed both workflow events: Linux verification completed in 16 and 18 seconds, and Windows verification/package jobs completed in 1 minute 49 seconds and 1 minute 53 seconds. All 17 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `b2d0cea` and opened two P2 findings: an invalid ALPH chunk could be skipped before a separately decoded VP8 payload, and the complete custom VP8L parser still ran synchronously in Electron's main process.
+- Both findings are accepted. A direct compiled reproducer supplied a valid 34-byte lossless WebP declaring 39,993,344 pixels and an extended 1×1 lossy WebP with a zero-length ALPH chunk. Before the correction, the lossless parser held the validation call for 34.0 ms and the malformed alpha file was accepted; exit `1`.
+
+**Scoped correction**
+
+- Main-process WebP work is now limited to bounded RIFF/chunk traversal, cheap VP8/VP8L/VP8X header checks, aggregate pixel/frame limits, animation-control structure, and frame/canvas geometry. Every complete simple WebP and every reconstructed animated-frame chunk stream is decoded through libwebp in the existing globally serialized, admission/time/memory/pixel-bounded worker.
+- Standalone animation-frame reconstruction retains the declared frame dimensions and adds a VP8X alpha envelope only when an ALPH chunk is present. This lets libwebp validate both ALPH+VP8 and VP8L frames even though its simple decode API does not decode a complete animated container.
+- The now-redundant 370-line custom VP8L parser was removed. Lossless streams share the same full-decoder boundary as lossy and alpha-bearing WebP, and worker-returned dimensions must still match the bounded structural metadata.
+- Focused regressions accept baseline, transformed, sparse-code, 2048×2048 compressible, and near-40MP lossless WebP; accept valid ALPH and animated-ALPH fixtures; reject zero-length ALPH in both simple and animated files; and prove nine concurrent lossless requests use the same eight-request admission cap as JPEG.
+- `TASKS.md`, `CHANGELOG.md`, and `docs/ARCHITECTURE.md` now describe complete off-main-thread WebP decoding and alpha validation.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | Focused full-WebP worker, valid/malformed ALPH, valid animated ALPH, near-40MP VP8L, concurrency, and prior image/task regressions passed; exit `0`. |
+| passed | direct compiled VP8L/ALPH reproducer | The same 39,993,344-pixel lossless file returned from the validation call in 0.4 ms before worker completion, and the formerly accepted zero-length ALPH file was rejected; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus ASAR inventory/runtime validation | Linux directory packaging completed; the obsolete custom VP8L parser is absent. Electron loaded the packaged worker, accepted PNG/JPEG/lossy/lossless/alpha/animated WebP, and rejected malformed alpha plus out-of-canvas animation; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-webp-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The production app remained running until intentional SIGINT; no Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` and scoped path review | No whitespace errors; changes are limited to the WebP validation boundary, focused fixtures, task/changelog/architecture records, deletion of the superseded parser, and this append-only entry. |
+
+**Next action**
+
+- Commit and push the correction, reply to and resolve both exact-head review findings with evidence, then require fresh CI and automated review on the new head before closing PR #5 delivery.
+- Blocker: none established.

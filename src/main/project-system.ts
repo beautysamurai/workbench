@@ -12,7 +12,6 @@ import type {
   Workspace,
 } from '../shared/types';
 import { shellQuote } from './path-utils';
-import { hasCompleteVp8lBitstream } from './vp8l-validator';
 import { runWslCommand } from './wsl';
 
 const PROJECT_FILES = ['AGENTS.md', 'TASKS.md', 'WORKBENCH_PROGRESS.md'] as const;
@@ -626,18 +625,11 @@ async function decodeProjectImages(
   return (await runProjectImageDecoder({ kind, images }))?.images ?? null;
 }
 
-interface StructuredVp8Payload {
-  start: number;
-  length: number;
-  width: number;
-  height: number;
-}
-
 function structuredVp8Payload(
   bytes: Uint8Array,
   start: number,
   length: number,
-): StructuredVp8Payload | null {
+): DecodedImageMetadata | null {
   if (length <= 10 || !startsWithBytes(bytes, [0x9d, 0x01, 0x2a], start + 3)) return null;
   const frameTag = uint24LittleEndian(bytes, start);
   const isKeyFrame = (frameTag & 0x01) === 0;
@@ -649,11 +641,7 @@ function structuredVp8Payload(
     || firstPartitionLength === 0 || firstPartitionLength >= bytesAfterFrameHeader) return null;
   const width = ((bytes[start + 6] ?? 0) + ((bytes[start + 7] ?? 0) << 8)) & 0x3fff;
   const height = ((bytes[start + 8] ?? 0) + ((bytes[start + 9] ?? 0) << 8)) & 0x3fff;
-  return validImageDimensions(width, height) ? { start, length, width, height } : null;
-}
-
-function isStructuredVp8lPayload(bytes: Uint8Array, start: number, length: number): boolean {
-  return hasCompleteVp8lBitstream(bytes, start, length);
+  return validImageDimensions(width, height) ? { width, height } : null;
 }
 
 function structuredVp8lDimensions(
@@ -661,8 +649,9 @@ function structuredVp8lDimensions(
   start: number,
   length: number,
 ): DecodedImageMetadata | null {
-  if (!isStructuredVp8lPayload(bytes, start, length)) return null;
+  if (length <= 5 || bytes[start] !== 0x2f) return null;
   const dimensions = uint32LittleEndian(bytes, start + 1);
+  if ((dimensions >>> 29) !== 0) return null;
   const width = (dimensions & 0x3fff) + 1;
   const height = ((dimensions >>> 14) & 0x3fff) + 1;
   return validImageDimensions(width, height) ? { width, height } : null;
@@ -684,11 +673,18 @@ function structuredVp8xPayload(bytes: Uint8Array, start: number, length: number)
 }
 
 interface WebpValidationContext {
+  animationFrames: number;
   canvas: StructuredVp8xPayload | null;
+  decodeCandidates: Array<DecodedImageMetadata & { bytes: Uint8Array }>;
+  hasAnimationControl: boolean;
   imageChunks: number;
   imagePixels: number;
   lastImage: DecodedImageMetadata | null;
-  lossyPayloads: StructuredVp8Payload[];
+  topLevelImages: number;
+}
+
+interface WebpChunkSequence {
+  hasAlpha: boolean;
 }
 
 function recordWebpImage(
@@ -704,39 +700,76 @@ function recordWebpImage(
   return true;
 }
 
+function wrappedWebpFrame(
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+  width: number,
+  height: number,
+  hasAlpha: boolean,
+): Uint8Array {
+  const extendedBytes = hasAlpha ? 18 : 0;
+  const wrapped = Buffer.alloc(12 + extendedBytes + (end - start));
+  wrapped.write('RIFF', 0, 'ascii');
+  wrapped.writeUInt32LE(wrapped.length - 8, 4);
+  wrapped.write('WEBP', 8, 'ascii');
+  if (hasAlpha) {
+    wrapped.write('VP8X', 12, 'ascii');
+    wrapped.writeUInt32LE(10, 16);
+    wrapped[20] = 0x10;
+    wrapped.writeUIntLE(width - 1, 24, 3);
+    wrapped.writeUIntLE(height - 1, 27, 3);
+  }
+  wrapped.set(bytes.subarray(start, end), 12 + extendedBytes);
+  return wrapped;
+}
+
 function hasStructuredWebpImageChunks(
   bytes: Uint8Array,
   start: number,
   end: number,
   context: WebpValidationContext,
   nested = false,
-): boolean {
+): WebpChunkSequence | null {
   let offset = start;
   let hasImage = false;
+  let hasAlpha = false;
   while (offset < end) {
-    if (offset + 8 > end) return false;
+    if (offset + 8 > end) return null;
     const chunkType = String.fromCharCode(...bytes.slice(offset, offset + 4));
     const chunkLength = uint32LittleEndian(bytes, offset + 4);
     const payloadStart = offset + 8;
     const payloadEnd = payloadStart + chunkLength;
     const paddedEnd = payloadEnd + (chunkLength % 2);
-    if (payloadEnd < payloadStart || paddedEnd > end) return false;
+    if (payloadEnd < payloadStart || paddedEnd > end) return null;
 
     if (chunkType === 'VP8 ') {
       const payload = structuredVp8Payload(bytes, payloadStart, chunkLength);
-      if (!payload || !recordWebpImage(context, payload)) return false;
-      context.lossyPayloads.push(payload);
+      if (!payload || !recordWebpImage(context, payload)) return null;
+      if (!nested) context.topLevelImages += 1;
       hasImage = true;
     } else if (chunkType === 'VP8L') {
       const dimensions = structuredVp8lDimensions(bytes, payloadStart, chunkLength);
-      if (!dimensions || !recordWebpImage(context, dimensions)) return false;
+      if (!dimensions || !recordWebpImage(context, dimensions)) return null;
+      if (!nested) context.topLevelImages += 1;
       hasImage = true;
+    } else if (chunkType === 'ALPH') {
+      hasAlpha = true;
     } else if (chunkType === 'VP8X') {
       const canvas = structuredVp8xPayload(bytes, payloadStart, chunkLength);
-      if (nested || offset !== start || !canvas) return false;
+      if (nested || offset !== start || !canvas) return null;
       context.canvas = canvas;
+    } else if (chunkType === 'ANIM') {
+      if (nested
+        || chunkLength !== 6
+        || !context.canvas
+        || (context.canvas.flags & 0x02) === 0
+        || context.hasAnimationControl
+        || context.animationFrames > 0
+        || hasImage) return null;
+      context.hasAnimationControl = true;
     } else if (chunkType === 'ANMF') {
-      if (nested || chunkLength < 24) return false;
+      if (nested || chunkLength < 24) return null;
       const x = uint24LittleEndian(bytes, payloadStart) * 2;
       const y = uint24LittleEndian(bytes, payloadStart + 3) * 2;
       const width = uint24LittleEndian(bytes, payloadStart + 6) + 1;
@@ -744,23 +777,32 @@ function hasStructuredWebpImageChunks(
       const frameFlags = bytes[payloadStart + 15] ?? 0;
       const canvas = context.canvas;
       const imageChunksBefore = context.imageChunks;
+      const frameStart = payloadStart + 16;
+      const frame = hasStructuredWebpImageChunks(bytes, frameStart, payloadEnd, context, true);
       if (!canvas
         || (canvas.flags & 0x02) === 0
+        || !context.hasAnimationControl
         || (frameFlags & 0xfc) !== 0
         || !validImageDimensions(width, height)
         || width > canvas.width
         || height > canvas.height
         || x > canvas.width - width
         || y > canvas.height - height
-        || !hasStructuredWebpImageChunks(bytes, payloadStart + 16, payloadEnd, context, true)
+        || !frame
         || context.imageChunks !== imageChunksBefore + 1
         || context.lastImage?.width !== width
-        || context.lastImage?.height !== height) return false;
+        || context.lastImage?.height !== height) return null;
+      context.animationFrames += 1;
+      context.decodeCandidates.push({
+        bytes: wrappedWebpFrame(bytes, frameStart, payloadEnd, width, height, frame.hasAlpha),
+        width,
+        height,
+      });
       hasImage = true;
     }
     offset = paddedEnd;
   }
-  return offset === end && hasImage;
+  return offset === end && hasImage ? { hasAlpha } : null;
 }
 
 function inspectStructuredWebp(bytes: Uint8Array): WebpValidationContext | null {
@@ -769,24 +811,32 @@ function inspectStructuredWebp(bytes: Uint8Array): WebpValidationContext | null 
     || !startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
     || uint32LittleEndian(bytes, 4) + 8 !== bytes.length) return null;
   const context: WebpValidationContext = {
+    animationFrames: 0,
     canvas: null,
+    decodeCandidates: [],
+    hasAnimationControl: false,
     imageChunks: 0,
     imagePixels: 0,
     lastImage: null,
-    lossyPayloads: [],
+    topLevelImages: 0,
   };
-  return hasStructuredWebpImageChunks(bytes, 12, bytes.length, context) ? context : null;
-}
-
-function wrappedVp8Payload(bytes: Uint8Array, payload: StructuredVp8Payload): Uint8Array {
-  const wrapped = Buffer.alloc(20 + payload.length + (payload.length % 2));
-  wrapped.write('RIFF', 0, 'ascii');
-  wrapped.writeUInt32LE(wrapped.length - 8, 4);
-  wrapped.write('WEBP', 8, 'ascii');
-  wrapped.write('VP8 ', 12, 'ascii');
-  wrapped.writeUInt32LE(payload.length, 16);
-  wrapped.set(bytes.subarray(payload.start, payload.start + payload.length), 20);
-  return wrapped;
+  const sequence = hasStructuredWebpImageChunks(bytes, 12, bytes.length, context);
+  if (!sequence) return null;
+  if (context.animationFrames > 0) {
+    return context.topLevelImages === 0
+      && context.hasAnimationControl
+      && !sequence.hasAlpha
+      && context.decodeCandidates.length === context.animationFrames
+      ? context
+      : null;
+  }
+  if (context.hasAnimationControl
+    || context.topLevelImages !== 1
+    || !context.lastImage
+    || ((context.canvas?.flags ?? 0) & 0x02) !== 0) return null;
+  const dimensions = context.canvas ?? context.lastImage;
+  context.decodeCandidates.push({ bytes, width: dimensions.width, height: dimensions.height });
+  return context;
 }
 
 async function hasDecodedJpegScan(bytes: Uint8Array): Promise<boolean> {
@@ -794,17 +844,14 @@ async function hasDecodedJpegScan(bytes: Uint8Array): Promise<boolean> {
   return decoded?.length === 1;
 }
 
-async function hasDecodedVp8Payloads(
-  bytes: Uint8Array,
-  payloads: StructuredVp8Payload[],
-): Promise<boolean> {
-  if (!payloads.length) return true;
+async function hasDecodedWebpImages(context: WebpValidationContext): Promise<boolean> {
+  if (!context.decodeCandidates.length) return false;
   const decoded = await decodeProjectImages(
     'webp',
-    payloads.map((payload) => wrappedVp8Payload(bytes, payload)),
+    context.decodeCandidates.map((candidate) => candidate.bytes),
   );
-  return decoded?.length === payloads.length && payloads.every((payload, index) => (
-    decoded[index]?.width === payload.width && decoded[index]?.height === payload.height
+  return decoded?.length === context.decodeCandidates.length && context.decodeCandidates.every((candidate, index) => (
+    decoded[index]?.width === candidate.width && decoded[index]?.height === candidate.height
   ));
 }
 
@@ -822,7 +869,7 @@ export async function validateProjectTaskImage(value: unknown): Promise<Validate
     return { bytes, mediaType: 'image/jpeg', extension: 'jpg' };
   }
   const webp = inspectStructuredWebp(bytes);
-  if (webp && await hasDecodedVp8Payloads(bytes, webp.lossyPayloads)) {
+  if (webp && await hasDecodedWebpImages(webp)) {
     return { bytes, mediaType: 'image/webp', extension: 'webp' };
   }
   throw new Error('Task images must be PNG, JPEG, or WebP files.');
