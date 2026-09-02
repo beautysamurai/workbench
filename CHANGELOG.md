@@ -28,6 +28,8 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Deeply nested task queues now validate and render with linear, non-recursive traversal instead of repeatedly walking every ancestor chain.
 - Malformed PNG image-data streams, undecodable JPEG tables/scans, corrupt lossy WebP control/token/alpha payloads, animated WebP frames outside their declared canvas, and incomplete lossless WebP streams are rejected; duplicate task IDs no longer expose a Send to Codex action that could select the wrong task.
 - Large, highly compressible PNG and lossless WebP task images now decode in a bounded worker instead of pausing the Electron main thread.
+- A task is now reported as added once its Markdown append commits, so a transient follow-up refresh failure cannot leave a stale draft that creates a duplicate on retry.
+- Duplicate, misplaced, or lossless-only WebP ALPH chunks are rejected even when the underlying decoder tolerates them.
 
 ### Security
 

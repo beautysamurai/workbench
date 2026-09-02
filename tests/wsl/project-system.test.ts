@@ -43,6 +43,38 @@ test('creates missing project Markdown without overwriting existing guidance and
   });
 });
 
+test('treats the durable task append as success when the follow-up inspection fails', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    await initializeProjectSystem(workspace);
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const sequencePath = path.join(directory, '.workbench/task-sequence');
+    let forcedInspectionFailure = false;
+    const watcher = fs.watch(tasksPath, () => {
+      if (forcedInspectionFailure) return;
+      const markdown = fs.readFileSync(tasksPath, 'utf8');
+      if (!markdown.includes('Committed task')) return;
+      forcedInspectionFailure = true;
+      fs.writeFileSync(sequencePath, 'corrupt-after-append\n', 'utf8');
+    });
+    try {
+      const updated = await addProjectTask(workspace, {
+        title: 'Committed task',
+        priority: 'P1',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      });
+      assert.equal(updated.tasks.at(-1)?.title, 'Committed task');
+      assert.equal(updated.tasks.at(-1)?.id, 'WB-001');
+      assert.equal(updated.tasks.at(-1)?.attachments[0]?.path, '.workbench/task-images/WB-001-01.png');
+      assert.equal(updated.nextTaskId, 'WB-002');
+    } finally {
+      watcher.close();
+    }
+    assert.equal(forcedInspectionFailure, true);
+    assert.equal((fs.readFileSync(tasksPath, 'utf8').match(/^### WB-001 — Committed task$/gm) ?? []).length, 1);
+    assert.deepEqual(fs.readFileSync(path.join(directory, '.workbench/task-images/WB-001-01.png')), Buffer.from(tinyPng()));
+  });
+});
+
 test('allocates increasing ids and persists a structured child with an image byte-for-byte', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     fs.writeFileSync(path.join(directory, 'TASKS.md'), '# Tasks\n\n### P1-004 — Existing\n\n- **State:** pending\n- **Objective:** Existing task.\n', 'utf8');

@@ -742,6 +742,7 @@ function hasStructuredWebpImageChunks(
     const payloadEnd = payloadStart + chunkLength;
     const paddedEnd = payloadEnd + (chunkLength % 2);
     if (payloadEnd < payloadStart || paddedEnd > end) return null;
+    if (hasAlpha && !hasImage && chunkType !== 'VP8 ') return null;
 
     if (chunkType === 'VP8 ') {
       const payload = structuredVp8Payload(bytes, payloadStart, chunkLength);
@@ -749,11 +750,17 @@ function hasStructuredWebpImageChunks(
       if (!nested) context.topLevelImages += 1;
       hasImage = true;
     } else if (chunkType === 'VP8L') {
+      if (hasAlpha) return null;
       const dimensions = structuredVp8lDimensions(bytes, payloadStart, chunkLength);
       if (!dimensions || !recordWebpImage(context, dimensions)) return null;
       if (!nested) context.topLevelImages += 1;
       hasImage = true;
     } else if (chunkType === 'ALPH') {
+      if (hasAlpha
+        || hasImage
+        || chunkLength === 0
+        || !context.canvas
+        || (context.canvas.flags & 0x10) === 0) return null;
       hasAlpha = true;
     } else if (chunkType === 'VP8X') {
       const canvas = structuredVp8xPayload(bytes, payloadStart, chunkLength);
@@ -1085,7 +1092,7 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     throw new Error('Choose a task priority.');
   }
   if (!cleanSingleLine(draft.title, 180)) throw new Error('Enter a task title.');
-  await initializeProjectSystem(workspace);
+  const initializedStatus = await initializeProjectSystem(workspace);
   const existingTasks = parseProjectTasks(await readTasks(workspace));
   const parentId = cleanSingleLine(draft.parentId, 100);
   if (parentId && !hasValidProjectTaskParentChain(existingTasks, parentId)) {
@@ -1104,6 +1111,16 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     path: `${PROJECT_IMAGE_DIRECTORY}/${taskId}-${String(index + 1).padStart(2, '0')}.${image.extension}`,
     mediaType: image.mediaType,
   }));
+  const task = formatProjectTask({ ...draft, parentId: parentId || null }, taskId, attachments);
+  const createdTask = parseProjectTasks(task)[0];
+  if (!createdTask || createdTask.id !== taskId) throw new Error('Task details could not be formatted.');
+  const committedTasks = [...existingTasks, createdTask];
+  const committedStatus: ProjectSystemStatus = {
+    files: initializedStatus.files,
+    tasks: committedTasks,
+    nextTaskId: nextProjectTaskId(committedTasks, Number(/-(\d+)$/.exec(taskId)?.[1] ?? 0)),
+    ready: initializedStatus.ready,
+  };
   const written: ProjectTaskAttachment[] = [];
   try {
     for (const [index, image] of images.entries()) {
@@ -1112,7 +1129,6 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
       await writeProjectTaskImage(workspace, attachment, image.bytes);
       written.push(attachment);
     }
-    const task = formatProjectTask({ ...draft, parentId: parentId || null }, taskId, attachments);
     await runProjectScript(workspace, [
       ...projectTaskLockStatements(),
       'target="$root_real/TASKS.md"',
@@ -1132,7 +1148,11 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     }
     throw error;
   }
-  return inspectProjectSystem(workspace);
+  try {
+    return await inspectProjectSystem(workspace);
+  } catch {
+    return committedStatus;
+  }
 }
 
 export function addProjectTask(workspace: Workspace, draft: ProjectTaskDraft): Promise<ProjectSystemStatus> {

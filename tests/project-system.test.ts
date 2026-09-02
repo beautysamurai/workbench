@@ -211,6 +211,33 @@ function webpContainer(chunks: Uint8Array[]): Uint8Array {
   return bytes;
 }
 
+function webpChunks(bytes: Uint8Array): Buffer[] {
+  const chunks: Buffer[] = [];
+  let offset = 12;
+  while (offset < bytes.length) {
+    const length = Buffer.from(bytes).readUInt32LE(offset + 4);
+    const end = offset + 8 + length + (length % 2);
+    chunks.push(Buffer.from(bytes.slice(offset, end)));
+    offset = end;
+  }
+  assert.equal(offset, bytes.length);
+  return chunks;
+}
+
+function animatedWebpWithFrameChunks(frameChunks: Uint8Array[]): Uint8Array {
+  const alpha = Buffer.from(alphaLossyWebp());
+  const canvas = Buffer.from(alpha.subarray(20, 30));
+  canvas[0] |= 0x02;
+  const frameHeader = Buffer.alloc(16);
+  frameHeader.writeUIntLE(1, 6, 3);
+  frameHeader.writeUIntLE(1, 9, 3);
+  return webpContainer([
+    webpChunk('VP8X', canvas),
+    webpChunk('ANIM', Buffer.alloc(6)),
+    webpChunk('ANMF', Buffer.concat([frameHeader, ...frameChunks])),
+  ]);
+}
+
 function animatedTinyWebp(
   canvasWidth = 1,
   canvasHeight = 1,
@@ -461,4 +488,17 @@ test('rejects malformed WebP chunks, corrupt VP8 partitions, and oversized bytes
     value: () => { throw new Error('Oversized bytes were copied.'); },
   });
   await assert.rejects(validateProjectTaskImage({ bytes: oversized }), /5 MB or smaller/);
+});
+
+test('rejects out-of-order and duplicate WebP alpha chunks tolerated by the decoder', async () => {
+  const [canvas, alpha, image] = webpChunks(alphaLossyWebp());
+  assert.ok(canvas && alpha && image);
+  for (const bytes of [
+    webpContainer([canvas, image, alpha]),
+    webpContainer([canvas, alpha, alpha, image]),
+    animatedWebpWithFrameChunks([image, alpha]),
+    animatedWebpWithFrameChunks([alpha, alpha, image]),
+  ]) {
+    await assert.rejects(validateProjectTaskImage({ bytes }), /PNG, JPEG, or WebP/);
+  }
 });

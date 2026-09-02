@@ -431,6 +431,7 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - Next action: publish the focused P0-003 pull request, verify both jobs, disposition automated review findings, then mark the task done if the final head is green.
 - Blocker: none established.
 
+
 ### 2026-08-29 22:20 JST — P0-003 retained portable Windows test coverage
 
 **Remote evidence before review fix**
@@ -1443,4 +1444,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 **Next action**
 
 - Commit and push the correction, reply to and resolve both exact-head review findings with evidence, then require fresh CI and automated review on the new head before closing PR #5 delivery.
+- Blocker: none established.
+
+
+### 2026-09-02 21:03 JST — P0-002 accepted post-append result and WebP ALPH-sequence findings
+
+**Exact-head review and reproduction**
+
+- Exact head `217935d` passed both workflow events: Linux verification completed in 20 and 22 seconds, and Windows verification/package jobs completed in 1 minute 48 seconds and 2 minutes 15 seconds. All 19 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `217935d` and opened one P2 finding: a failure in the inspection performed after a successful `TASKS.md` append rejected the add operation even though the task and images were durable, leaving the renderer draft available for a duplicate retry.
+- The finding is accepted. A focused WSL integration regression watches for the committed heading, corrupts sequence metadata before the follow-up inspection, and reproduced the pre-fix `Task id sequence is corrupt.` rejection while exactly one `WB-001` task remained on disk; the direct test exited `1`.
+- Final-diff reflection also found that libwebp tolerates duplicate ALPH chunks and ALPH placed after VP8. A direct compiled probe showed that both malformed still-image forms and both corresponding animated-frame forms were accepted before the correction; exit `1`.
+
+**Scoped correction**
+
+- Task creation now builds a validated known status before writing, treats the locked Markdown append as its commit point, and still attempts a fresh inspection. If only that post-commit inspection fails, it returns the known committed task, attachment metadata, and next ID instead of reporting the durable add as failed. Failures before the append retain the existing image-cleanup and rejection behavior.
+- WebP structure validation now permits at most one ALPH chunk, requires it directly before lossy VP8 data, rejects it after image data or with VP8L, and requires the retained VP8X canvas to advertise alpha. Complete ALPH payload decoding remains in the bounded worker.
+- Focused tests cover the post-commit fallback with the exact image bytes still persisted, plus duplicate and reordered ALPH chunks in still and animated WebP containers.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/wsl/project-system.test.js` | Focused image-structure and post-commit integration regressions passed; exit `0`. |
+| passed | direct compiled seven-case ALPH sequence probe | Valid alpha remained accepted; reordered, duplicate, lossless-only, and corresponding animated ALPH sequences were rejected; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus packaged-ASAR validator | Linux directory packaging completed. Electron loaded the packaged worker; accepted PNG/JPEG/lossy/lossless/alpha/animated WebP; and rejected out-of-canvas, empty, reordered, and duplicate alpha data; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-webp-final-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The production app remained running until intentional SIGINT; no Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Review the scoped diff, commit and push both corrections, reply to and resolve the accepted review finding with commit evidence, then require fresh CI and exact-head automated review.
 - Blocker: none established.
