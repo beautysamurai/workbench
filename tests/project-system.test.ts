@@ -47,6 +47,30 @@ function pngWithImageData(imageData: Uint8Array): Uint8Array {
   return pngWithImageDataChunks([imageData]);
 }
 
+function pngChunk(type: string, payload: Uint8Array): Buffer {
+  const chunk = Buffer.alloc(payload.length + 12);
+  chunk.writeUInt32BE(payload.length, 0);
+  chunk.write(type, 4, 'ascii');
+  chunk.set(payload, 8);
+  chunk.writeUInt32BE(testPngCrc32(chunk.subarray(4, 8 + payload.length)), 8 + payload.length);
+  return chunk;
+}
+
+function compressibleRgbaPng(width: number, height: number): Uint8Array {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const scanlines = Buffer.alloc((width * 4 + 1) * height);
+  return Uint8Array.from(Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(scanlines, { level: 9 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]));
+}
+
 function splitImageDataPng(): Uint8Array {
   const png = Buffer.from(tinyPng());
   const typeOffset = png.indexOf('IDAT');
@@ -159,6 +183,44 @@ function extendedTinyWebp(): Uint8Array {
   return bytes;
 }
 
+function webpChunk(type: string, payload: Uint8Array): Buffer {
+  const chunk = Buffer.alloc(8 + payload.length + (payload.length % 2));
+  chunk.write(type, 0, 'ascii');
+  chunk.writeUInt32LE(payload.length, 4);
+  chunk.set(payload, 8);
+  return chunk;
+}
+
+function animatedTinyWebp(
+  canvasWidth = 1,
+  canvasHeight = 1,
+  frameX = 0,
+  frameY = 0,
+  includeCanvas = true,
+): Uint8Array {
+  assert.equal(frameX % 2, 0);
+  assert.equal(frameY % 2, 0);
+  const canvas = Buffer.alloc(10);
+  canvas[0] = 0x02;
+  canvas.writeUIntLE(canvasWidth - 1, 4, 3);
+  canvas.writeUIntLE(canvasHeight - 1, 7, 3);
+  const frameHeader = Buffer.alloc(16);
+  frameHeader.writeUIntLE(frameX / 2, 0, 3);
+  frameHeader.writeUIntLE(frameY / 2, 3, 3);
+  const frame = Buffer.concat([frameHeader, tinyWebp().slice(12)]);
+  const chunks = Buffer.concat([
+    ...(includeCanvas ? [webpChunk('VP8X', canvas)] : []),
+    webpChunk('ANIM', Buffer.alloc(6)),
+    webpChunk('ANMF', frame),
+  ]);
+  const bytes = Buffer.alloc(12 + chunks.length);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WEBP', 8, 'ascii');
+  bytes.set(chunks, 12);
+  return bytes;
+}
+
 test('parses task headings and normalizes supported states', () => {
   const tasks = parseProjectTasks('# Tasks\n\n### P0-001 — Ship it\n\n- **State:** in progress\n- **Objective:** Finish safely.\n');
   assert.deepEqual(tasks, [{
@@ -231,6 +293,7 @@ test('validates supported image bytes before workspace filesystem writes', async
   assert.equal((await validateProjectTaskImage({ bytes: tinyLossyWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: patternedLossyWebp() })).mediaType, 'image/webp');
   assert.equal((await validateProjectTaskImage({ bytes: extendedTinyWebp() })).mediaType, 'image/webp');
+  assert.equal((await validateProjectTaskImage({ bytes: animatedTinyWebp() })).mediaType, 'image/webp');
 });
 
 test('rejects JPEGs without decodable tables, scans, and encoded image data', async () => {
@@ -280,6 +343,18 @@ test('rejects PNGs without image data or with corrupted chunk data', async () =>
   );
 });
 
+test('inflates highly compressible PNG image data without blocking the calling thread', async () => {
+  const png = compressibleRgbaPng(2048, 2048);
+  assert.ok(png.length < 5 * 1024 * 1024);
+  const validation = validateProjectTaskImage({ bytes: png });
+  const firstResult = await Promise.race([
+    validation.then(() => 'validated'),
+    new Promise<string>((resolve) => queueMicrotask(() => resolve('yielded'))),
+  ]);
+  assert.equal(firstResult, 'yielded');
+  assert.equal((await validation).mediaType, 'image/png');
+});
+
 test('rejects malformed WebP chunks, corrupt VP8 partitions, and oversized bytes before copying', async () => {
   const emptyVp8x = Buffer.alloc(20);
   emptyVp8x.write('RIFF', 0, 'ascii');
@@ -308,6 +383,8 @@ test('rejects malformed WebP chunks, corrupt VP8 partitions, and oversized bytes
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithFrameTag((49 << 5) | 0x10) }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptFirstPartition() }), /PNG, JPEG, or WebP/);
   await assert.rejects(validateProjectTaskImage({ bytes: lossyWebpWithCorruptTokenPartition() }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: animatedTinyWebp(1, 1, 2) }), /PNG, JPEG, or WebP/);
+  await assert.rejects(validateProjectTaskImage({ bytes: animatedTinyWebp(1, 1, 0, 0, false) }), /PNG, JPEG, or WebP/);
 
   const oversized = new Uint8Array((5 * 1024 * 1024) + 1);
   Object.defineProperty(oversized, Symbol.iterator, {

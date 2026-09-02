@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { inflateSync } from 'node:zlib';
 import type {
   ProjectSystemFile,
   ProjectSystemStatus,
@@ -292,6 +291,11 @@ interface PngScanlinePass {
   rowCount: number;
 }
 
+interface StructuredPngImageData {
+  compressed: Uint8Array;
+  passes: PngScanlinePass[];
+}
+
 function pngPassSize(size: number, start: number, step: number): number {
   return size <= start ? 0 : Math.ceil((size - start) / step);
 }
@@ -327,45 +331,8 @@ function pngScanlinePasses(
   return passes.length ? passes : null;
 }
 
-function hasValidPngImageData(
-  chunks: Uint8Array[],
-  compressedBytes: number,
-  width: number,
-  height: number,
-  bitDepth: number,
-  colorType: number,
-  interlace: number,
-): boolean {
-  const passes = pngScanlinePasses(width, height, bitDepth, colorType, interlace);
-  if (!passes) return false;
-  const expectedBytes = passes.reduce((total, pass) => total + ((pass.rowBytes + 1) * pass.rowCount), 0);
-  const compressed = Buffer.allocUnsafe(compressedBytes);
-  let compressedOffset = 0;
-  for (const chunk of chunks) {
-    compressed.set(chunk, compressedOffset);
-    compressedOffset += chunk.length;
-  }
-  try {
-    const result = inflateSync(compressed, {
-      info: true,
-      maxOutputLength: expectedBytes,
-    }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
-    if (result.engine.bytesWritten !== compressed.length || result.buffer.length !== expectedBytes) return false;
-    let offset = 0;
-    for (const pass of passes) {
-      for (let row = 0; row < pass.rowCount; row += 1) {
-        if ((result.buffer[offset] ?? 5) > 4) return false;
-        offset += pass.rowBytes + 1;
-      }
-    }
-    return offset === result.buffer.length;
-  } catch {
-    return false;
-  }
-}
-
-function isStructuredPng(bytes: Uint8Array): boolean {
-  if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return false;
+function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null {
+  if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return null;
   let offset = 8;
   let colorType = -1;
   let bitDepth = 0;
@@ -379,51 +346,57 @@ function isStructuredPng(bytes: Uint8Array): boolean {
   const imageDataChunks: Uint8Array[] = [];
 
   while (offset < bytes.length) {
-    if (offset + 12 > bytes.length || !isPngChunkType(bytes, offset + 4)) return false;
+    if (offset + 12 > bytes.length || !isPngChunkType(bytes, offset + 4)) return null;
     const length = uint32BigEndian(bytes, offset);
     const dataStart = offset + 8;
     const dataEnd = dataStart + length;
     const chunkEnd = dataEnd + 4;
-    if (dataEnd < dataStart || chunkEnd > bytes.length) return false;
-    if (pngCrc32(bytes, offset + 4, dataEnd) !== uint32BigEndian(bytes, dataEnd)) return false;
+    if (dataEnd < dataStart || chunkEnd > bytes.length) return null;
+    if (pngCrc32(bytes, offset + 4, dataEnd) !== uint32BigEndian(bytes, dataEnd)) return null;
 
     const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
     if (offset === 8) {
-      if (type !== 'IHDR' || length !== 13 || !validPngHeader(bytes, dataStart)) return false;
+      if (type !== 'IHDR' || length !== 13 || !validPngHeader(bytes, dataStart)) return null;
       bitDepth = bytes[dataStart + 8] ?? 0;
       colorType = bytes[dataStart + 9] ?? -1;
       width = uint32BigEndian(bytes, dataStart);
       height = uint32BigEndian(bytes, dataStart + 4);
       interlace = bytes[dataStart + 12] ?? 0;
     } else if (type === 'IHDR') {
-      return false;
+      return null;
     } else if (type === 'PLTE') {
       const entries = length / 3;
       if (hasPalette || hasImageData || colorType === 0 || colorType === 4
         || length === 0 || length % 3 !== 0 || entries > 256
-        || (colorType === 3 && entries > (2 ** bitDepth))) return false;
+        || (colorType === 3 && entries > (2 ** bitDepth))) return null;
       hasPalette = true;
     } else if (type === 'IDAT') {
-      if (imageDataEnded) return false;
+      if (imageDataEnded) return null;
       hasImageData = true;
       imageDataBytes += length;
       imageDataChunks.push(bytes.subarray(dataStart, dataEnd));
     } else if (type === 'IEND') {
-      return length === 0
-        && hasImageData
-        && imageDataBytes > 0
-        && (colorType !== 3 || hasPalette)
-        && chunkEnd === bytes.length
-        && hasValidPngImageData(
-          imageDataChunks, imageDataBytes, width, height, bitDepth, colorType, interlace,
-        );
+      if (length !== 0
+        || !hasImageData
+        || imageDataBytes <= 0
+        || (colorType === 3 && !hasPalette)
+        || chunkEnd !== bytes.length) return null;
+      const passes = pngScanlinePasses(width, height, bitDepth, colorType, interlace);
+      if (!passes) return null;
+      const compressed = Buffer.allocUnsafe(imageDataBytes);
+      let compressedOffset = 0;
+      for (const chunk of imageDataChunks) {
+        compressed.set(chunk, compressedOffset);
+        compressedOffset += chunk.length;
+      }
+      return { compressed, passes };
     } else {
-      if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return false;
+      if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return null;
       if (hasImageData) imageDataEnded = true;
     }
     offset = chunkEnd;
   }
-  return false;
+  return null;
 }
 
 function isStructuredJpeg(bytes: Uint8Array): boolean {
@@ -530,8 +503,22 @@ interface DecodedImageMetadata {
   height: number;
 }
 
+interface CompressedImageDecodeRequest {
+  kind: 'jpeg' | 'webp';
+  images: Uint8Array[];
+}
+
+interface PngImageDecodeRequest {
+  kind: 'png';
+  compressed: Uint8Array;
+  passes: PngScanlinePass[];
+}
+
+type ProjectImageDecoderRequest = CompressedImageDecodeRequest | PngImageDecodeRequest;
+
 interface ProjectImageDecoderMessage {
-  images: DecodedImageMetadata[];
+  valid: boolean;
+  images?: DecodedImageMetadata[];
 }
 
 function isDecodedImageMetadata(value: unknown): value is DecodedImageMetadata {
@@ -542,11 +529,10 @@ function isDecodedImageMetadata(value: unknown): value is DecodedImageMetadata {
     && validImageDimensions(candidate.width ?? 0, candidate.height ?? 0);
 }
 
-async function decodeProjectImagesNow(
-  kind: 'jpeg' | 'webp',
-  images: Uint8Array[],
-): Promise<DecodedImageMetadata[] | null> {
-  if (!images.length || images.length > MAX_WEBP_IMAGE_CHUNKS) {
+async function runProjectImageDecoderNow(
+  request: ProjectImageDecoderRequest,
+): Promise<ProjectImageDecoderMessage | null> {
+  if (request.kind !== 'png' && (!request.images.length || request.images.length > MAX_WEBP_IMAGE_CHUNKS)) {
     throw new Error('Task image decoding could not start.');
   }
   try {
@@ -558,12 +544,18 @@ async function decodeProjectImagesNow(
           maxYoungGenerationSizeMb: 32,
           stackSizeMb: 4,
         },
-        workerData: {
-          kind,
-          images: images.map((image) => Uint8Array.from(image)),
-        },
+        workerData: request.kind === 'png'
+          ? {
+            kind: request.kind,
+            compressed: Uint8Array.from(request.compressed),
+            passes: request.passes.map((pass) => ({ ...pass })),
+          }
+          : {
+            kind: request.kind,
+            images: request.images.map((image) => Uint8Array.from(image)),
+          },
       });
-      const finish = (result: DecodedImageMetadata[] | null): void => {
+      const finish = (result: ProjectImageDecoderMessage | null): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -580,13 +572,17 @@ async function decodeProjectImagesNow(
       }, PROJECT_IMAGE_DECODE_TIMEOUT_MS);
       worker.once('message', (value: unknown) => {
         const message = value as Partial<ProjectImageDecoderMessage>;
-        if (!Array.isArray(message?.images)) {
-          fail();
-        } else if (message.images.length === 0) {
+        if (message?.valid === false && message.images === undefined) {
           finish(null);
-        } else if (message.images.length === images.length
+        } else if (message?.valid !== true) {
+          fail();
+        } else if (request.kind === 'png' && message.images === undefined) {
+          finish({ valid: true });
+        } else if (request.kind !== 'png'
+          && Array.isArray(message.images)
+          && message.images.length === request.images.length
           && message.images.every(isDecodedImageMetadata)) {
-          finish(message.images);
+          finish({ valid: true, images: message.images });
         } else {
           fail();
         }
@@ -599,21 +595,35 @@ async function decodeProjectImagesNow(
   }
 }
 
-async function decodeProjectImages(
-  kind: 'jpeg' | 'webp',
-  images: Uint8Array[],
-): Promise<DecodedImageMetadata[] | null> {
+async function runProjectImageDecoder(
+  request: ProjectImageDecoderRequest,
+): Promise<ProjectImageDecoderMessage | null> {
   if (pendingProjectImageDecodes >= MAX_PENDING_PROJECT_IMAGE_DECODES) {
     throw new Error('Too many task images are being validated. Wait for the current images and try again.');
   }
   pendingProjectImageDecodes += 1;
-  const pending = projectImageDecodeQueue.then(() => decodeProjectImagesNow(kind, images));
+  const pending = projectImageDecodeQueue.then(() => runProjectImageDecoderNow(request));
   projectImageDecodeQueue = pending.then(() => undefined, () => undefined);
   try {
     return await pending;
   } finally {
     pendingProjectImageDecodes -= 1;
   }
+}
+
+async function hasValidPngImageData(image: StructuredPngImageData): Promise<boolean> {
+  return (await runProjectImageDecoder({
+    kind: 'png',
+    compressed: image.compressed,
+    passes: image.passes,
+  }))?.valid === true;
+}
+
+async function decodeProjectImages(
+  kind: CompressedImageDecodeRequest['kind'],
+  images: Uint8Array[],
+): Promise<DecodedImageMetadata[] | null> {
+  return (await runProjectImageDecoder({ kind, images }))?.images ?? null;
 }
 
 interface StructuredVp8Payload {
@@ -658,18 +668,23 @@ function structuredVp8lDimensions(
   return validImageDimensions(width, height) ? { width, height } : null;
 }
 
-function isStructuredVp8xPayload(bytes: Uint8Array, start: number, length: number): boolean {
+interface StructuredVp8xPayload extends DecodedImageMetadata {
+  flags: number;
+}
+
+function structuredVp8xPayload(bytes: Uint8Array, start: number, length: number): StructuredVp8xPayload | null {
   if (length !== 10
     || ((bytes[start] ?? 0) & 0xc1) !== 0
     || bytes[start + 1] !== 0
     || bytes[start + 2] !== 0
-    || bytes[start + 3] !== 0) return false;
+    || bytes[start + 3] !== 0) return null;
   const width = uint24LittleEndian(bytes, start + 4) + 1;
   const height = uint24LittleEndian(bytes, start + 7) + 1;
-  return validImageDimensions(width, height);
+  return validImageDimensions(width, height) ? { flags: bytes[start] ?? 0, width, height } : null;
 }
 
 interface WebpValidationContext {
+  canvas: StructuredVp8xPayload | null;
   imageChunks: number;
   imagePixels: number;
   lastImage: DecodedImageMetadata | null;
@@ -717,17 +732,30 @@ function hasStructuredWebpImageChunks(
       if (!dimensions || !recordWebpImage(context, dimensions)) return false;
       hasImage = true;
     } else if (chunkType === 'VP8X') {
-      if (nested || offset !== start || !isStructuredVp8xPayload(bytes, payloadStart, chunkLength)) return false;
+      const canvas = structuredVp8xPayload(bytes, payloadStart, chunkLength);
+      if (nested || offset !== start || !canvas) return false;
+      context.canvas = canvas;
     } else if (chunkType === 'ANMF') {
       if (nested || chunkLength < 24) return false;
+      const x = uint24LittleEndian(bytes, payloadStart) * 2;
+      const y = uint24LittleEndian(bytes, payloadStart + 3) * 2;
       const width = uint24LittleEndian(bytes, payloadStart + 6) + 1;
       const height = uint24LittleEndian(bytes, payloadStart + 9) + 1;
+      const frameFlags = bytes[payloadStart + 15] ?? 0;
+      const canvas = context.canvas;
       const imageChunksBefore = context.imageChunks;
-      if (!validImageDimensions(width, height)
+      if (!canvas
+        || (canvas.flags & 0x02) === 0
+        || (frameFlags & 0xfc) !== 0
+        || !validImageDimensions(width, height)
+        || width > canvas.width
+        || height > canvas.height
+        || x > canvas.width - width
+        || y > canvas.height - height
         || !hasStructuredWebpImageChunks(bytes, payloadStart + 16, payloadEnd, context, true)
         || context.imageChunks !== imageChunksBefore + 1
         || context.lastImage?.width !== width
-        || context.lastImage.height !== height) return false;
+        || context.lastImage?.height !== height) return false;
       hasImage = true;
     }
     offset = paddedEnd;
@@ -741,6 +769,7 @@ function inspectStructuredWebp(bytes: Uint8Array): WebpValidationContext | null 
     || !startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
     || uint32LittleEndian(bytes, 4) + 8 !== bytes.length) return null;
   const context: WebpValidationContext = {
+    canvas: null,
     imageChunks: 0,
     imagePixels: 0,
     lastImage: null,
@@ -785,7 +814,8 @@ export async function validateProjectTaskImage(value: unknown): Promise<Validate
   if (!candidate.bytes.byteLength) throw new Error('Pasted image is empty.');
   if (candidate.bytes.byteLength > MAX_TASK_IMAGE_BYTES) throw new Error('Each task image must be 5 MB or smaller.');
   const bytes = Uint8Array.from(candidate.bytes);
-  if (isStructuredPng(bytes)) {
+  const png = inspectStructuredPng(bytes);
+  if (png && await hasValidPngImageData(png)) {
     return { bytes, mediaType: 'image/png', extension: 'png' };
   }
   if (isStructuredJpeg(bytes) && await hasDecodedJpegScan(bytes)) {

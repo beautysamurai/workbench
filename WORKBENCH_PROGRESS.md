@@ -1372,3 +1372,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this exact-head decode correction, reply to and resolve both review findings with commit evidence, then require fresh CI and automated review on the new head.
 - Blocker: none established.
+
+### 2026-09-02 20:06 JST — P0-002 accepted PNG responsiveness and animated-WebP canvas review findings
+
+**Exact-head review evidence and reproduction**
+
+- Exact head `c9e77c6` passed both workflow events: Linux verification completed in 15 and 16 seconds, and Windows verification/package jobs completed in 1 minute 48 seconds and 1 minute 53 seconds.
+- Automated Codex review completed on exact head `c9e77c6` and opened two P2 findings: bounded PNG inflation still ran synchronously in Electron's main process, and animated WebP frame offsets were not checked against the VP8X canvas.
+- Both findings are accepted. A direct compiled reproducer used a 36,761-byte PNG whose scanlines inflate to 37,751,808 bytes and a structurally complete 1×1 animated WebP whose frame begins at x=2. Before the correction, the validation call blocked synchronously for 42.5 ms and the out-of-canvas frame was accepted; exit `1`.
+
+**Scoped correction**
+
+- The main process still performs bounded PNG signature, chunk, CRC, header, palette, and ordering checks, then sends only concatenated IDAT bytes plus the derived scanline-pass layout through the existing globally serialized image-worker queue. The worker revalidates request limits, caps output at 160 MiB, requires exact compressed-stream consumption and output length, and checks every PNG filter byte without returning inflated pixels to the main process.
+- The worker protocol now explicitly distinguishes valid, invalid, and malformed responses across PNG, JPEG, and WebP requests while retaining the eight-request admission cap, 15-second timeout, and explicit heap/stack limits.
+- VP8X canvas dimensions and feature flags are retained. Every ANMF frame now requires the animation feature, valid frame flags, a declared canvas, and an x/y/width/height rectangle wholly inside that canvas before its nested image payload is accepted.
+- Focused regressions prove that a highly compressible 2048×2048 RGBA PNG yields to a queued microtask before validation completes, accept a valid animated 1×1 WebP, and reject both a missing-canvas animation and the exact out-of-canvas frame.
+- `TASKS.md`, `CHANGELOG.md`, and `docs/ARCHITECTURE.md` now describe off-main-thread PNG inflation and animated-frame canvas enforcement.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | Focused PNG-yield, valid animation, missing/out-of-bounds canvas, and prior image/task regressions passed; exit `0`. |
+| passed | direct compiled PNG/animated-WebP reproducer | The 37,751,808-byte inflation returned from the validation call in 1.6 ms before completing in its worker, and the formerly accepted out-of-canvas frame was rejected; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus ASAR inventory/runtime validation | Linux directory packaging completed; the archive contains the worker and decoder assets. Electron loaded the packaged worker, accepted PNG/JPEG/WebP, and rejected the out-of-canvas animation; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-review-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The production app remained running until intentional SIGINT; no Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` and scoped path review | No whitespace errors; the seven changed paths are limited to image validation, focused tests, task/changelog/architecture records, and this append-only entry. |
+
+**Next action**
+
+- Commit and push the correction, reply to and resolve both review findings with exact commit evidence, then require fresh CI and automated review on the new head before closing PR #5 delivery.
+- Blocker: none established.
