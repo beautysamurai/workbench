@@ -1480,3 +1480,35 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Review the scoped diff, commit and push both corrections, reply to and resolve the accepted review finding with commit evidence, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 21:17 JST — P0-002 accepted hard-link boundary review finding
+
+**Exact-head review and reproduction**
+
+- Exact head `4a0a5ce` passed both workflow events: Linux verification completed in 16 and 18 seconds, and Windows verification/package jobs completed in 2 minutes 2 seconds and 3 minutes 26 seconds. All 20 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `4a0a5ce` and opened one P1 finding: an in-workspace hard link to an external `TASKS.md` inode passed the regular-file and `realpath` checks, so appending through it could modify data outside the selected workspace.
+- The finding is accepted. A focused WSL regression creates exactly that two-link inode. Before the correction, project inspection reported the linked `TASKS.md` as safe (`true` instead of expected `false`); the direct test exited `1`.
+
+**Scoped correction**
+
+- Project workflow inspection and initialization now require each resolved Markdown file to have a link count of exactly one. Task reads and the locked append repeat the invariant at their operation boundary.
+- The same invariant protects the persistent task-sequence and lock files, preventing workspace-controlled hard links from redirecting metadata reads or locking to an external inode. Existing escaping-symlink, regular-file, fixed-path, and `realpath` checks remain in force.
+- The focused regression verifies unsafe status, an actionable rejection, and byte-for-byte preservation of the external file.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wsl/project-system.test.js` | The hard-link boundary case and all prior WSL project-system integration cases passed; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including the hard-link WSL integration case, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus packaged-ASAR validator | Linux directory packaging completed. The packaged project service marked the hard-linked task file unsafe, rejected the add, and preserved the external inode; prior PNG/JPEG/WebP cases also passed; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-hardlink-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The production app remained running until intentional SIGINT; no Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Commit and push the verified hard-link correction, resolve the accepted finding with exact evidence, then require fresh CI and exact-head automated review.
+- Blocker: none established.

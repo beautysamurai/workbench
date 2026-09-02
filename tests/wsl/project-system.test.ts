@@ -9,6 +9,7 @@ import type { Workspace } from '../../src/shared/types';
 import {
   addProjectTask,
   initializeProjectSystem,
+  inspectProjectSystem,
   parseProjectTasks,
 } from '../../src/main/project-system';
 
@@ -206,6 +207,27 @@ test('refuses to follow an unsafe project-file symlink', async () => {
     try {
       await assert.rejects(initializeProjectSystem(workspace), /unsafe project-file symlink/);
       assert.equal(fs.readFileSync(outsideTasks, 'utf8'), '# Outside\n');
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test('refuses a hard-linked task file without modifying its external inode', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-hardlink-outside-'));
+    const outsideTasks = path.join(outside, 'TASKS.md');
+    const original = '# External tasks\n';
+    fs.writeFileSync(outsideTasks, original, 'utf8');
+    fs.linkSync(outsideTasks, path.join(directory, 'TASKS.md'));
+    try {
+      const inspected = await inspectProjectSystem(workspace);
+      assert.equal(inspected.files.find((file) => file.name === 'TASKS.md')?.safe, false);
+      await assert.rejects(
+        addProjectTask(workspace, { title: 'Must stay local', priority: 'P1' }),
+        /multiply linked/,
+      );
+      assert.equal(fs.readFileSync(outsideTasks, 'utf8'), original);
     } finally {
       fs.rmSync(outside, { recursive: true, force: true });
     }
