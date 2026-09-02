@@ -38,4 +38,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Task-image creation and cleanup operate through a validated Linux directory handle so replacing the checked pathname cannot redirect file operations outside the workspace.
 - Project-task operations pin the workspace root, `TASKS.md`, metadata directory, lock, sequence counter, and image directory to validated Linux handles, preventing a concurrent pathname replacement from redirecting reads or writes outside the selected workspace.
 - Temporary task-image files remain open and identity-checked from byte streaming through mode setting and final installation, so replacing the temporary pathname cannot modify an external file or install unvalidated bytes.
-- Child-task creation now rejects an intervening `TASKS.md` edit at the locked append boundary, preventing a removed or duplicated parent from producing an orphaned or ambiguous child.
+- Task creation now uses a validated atomic `TASKS.md` update that preserves compatible concurrent edits and rejects a child if its parent was removed or duplicated, preventing orphaned or ambiguous GUI tasks.

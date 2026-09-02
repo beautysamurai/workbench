@@ -50,8 +50,9 @@ test('treats the durable task append as success when the follow-up inspection fa
     const tasksPath = path.join(directory, 'TASKS.md');
     const sequencePath = path.join(directory, '.workbench/task-sequence');
     let forcedInspectionFailure = false;
-    const watcher = fs.watch(tasksPath, () => {
+    const watcher = fs.watch(directory, (_event, filename) => {
       if (forcedInspectionFailure) return;
+      if (filename !== 'TASKS.md' || !fs.existsSync(tasksPath)) return;
       const markdown = fs.readFileSync(tasksPath, 'utf8');
       if (!markdown.includes('Committed task')) return;
       forcedInspectionFailure = true;
@@ -78,7 +79,9 @@ test('treats the durable task append as success when the follow-up inspection fa
 
 test('allocates increasing ids and persists a structured child with an image byte-for-byte', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
-    fs.writeFileSync(path.join(directory, 'TASKS.md'), '# Tasks\n\n### P1-004 — Existing\n\n- **State:** pending\n- **Objective:** Existing task.\n', 'utf8');
+    const tasksPath = path.join(directory, 'TASKS.md');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Existing\n\n- **State:** pending\n- **Objective:** Existing task.\n', 'utf8');
+    fs.chmodSync(tasksPath, 0o640);
     const png = tinyPng();
     const updated = await addProjectTask(workspace, {
       title: 'Structured child', objective: 'Persist all fields.', priority: 'P0', parentId: 'P1-004',
@@ -96,6 +99,11 @@ test('allocates increasing ids and persists a structured child with an image byt
     assert.equal(imageStat.isFile(), true);
     assert.equal(imageStat.nlink, 1);
     assert.equal(imageStat.mode & 0o777, 0o644);
+    const tasksStat = fs.lstatSync(tasksPath);
+    assert.equal(tasksStat.isFile(), true);
+    assert.equal(tasksStat.nlink, 1);
+    assert.equal(tasksStat.mode & 0o777, 0o640);
+    assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
   });
 });
 
@@ -149,7 +157,7 @@ exit "$status"
         priority: 'P1',
         parentId: 'P1-004',
         images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
-      }), /TASKS\.md changed while the task was being prepared/);
+      }), /existing parent/);
       assert.equal(fs.existsSync(marker), true, 'The test must remove the parent after image writing.');
       assert.equal(fs.readFileSync(tasksPath, 'utf8'), '# Tasks\n');
       assert.deepEqual(fs.readdirSync(path.join(directory, '.workbench/task-images')), []);
@@ -160,6 +168,154 @@ exit "$status"
       else process.env.WORKBENCH_TEST_PARENT_RACE_MARKER = oldEnvironment.marker;
       if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_PARENT_RACE_TASKS;
       else process.env.WORKBENCH_TEST_PARENT_RACE_TASKS = oldEnvironment.tasks;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('atomically rejects a parent edit at the task-file commit point', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-parent-commit-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const mvWrapper = path.join(toolsDirectory, 'mv');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(mvWrapper, `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+claim_path="\${@: -1}"
+if [[ "$source_path" == */TASKS.md ]] && [[ "$claim_path" == */.TASKS.md.workbench-previous-* ]] && [ ! -e "$WORKBENCH_TEST_PARENT_COMMIT_MARKER" ]; then
+  : > "$WORKBENCH_TEST_PARENT_COMMIT_MARKER"
+  printf '# Tasks\\n' > "$WORKBENCH_TEST_PARENT_COMMIT_TASKS.editor"
+  /usr/bin/mv -fT -- "$WORKBENCH_TEST_PARENT_COMMIT_TASKS.editor" "$WORKBENCH_TEST_PARENT_COMMIT_TASKS"
+fi
+exec /usr/bin/mv "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_PARENT_COMMIT_MARKER,
+      tasks: process.env.WORKBENCH_TEST_PARENT_COMMIT_TASKS,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_PARENT_COMMIT_MARKER = marker;
+    process.env.WORKBENCH_TEST_PARENT_COMMIT_TASKS = tasksPath;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'Atomic racing child',
+        priority: 'P1',
+        parentId: 'P1-004',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }), /existing parent/);
+      assert.equal(fs.existsSync(marker), true, 'The test must remove the parent immediately before the atomic claim.');
+      assert.equal(fs.readFileSync(tasksPath, 'utf8'), '# Tasks\n');
+      assert.deepEqual(fs.readdirSync(path.join(directory, '.workbench/task-images')), []);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_PARENT_COMMIT_MARKER;
+      else process.env.WORKBENCH_TEST_PARENT_COMMIT_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_PARENT_COMMIT_TASKS;
+      else process.env.WORKBENCH_TEST_PARENT_COMMIT_TASKS = oldEnvironment.tasks;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('does not clobber a task file created while the validated entry is claimed', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-task-install-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const lnWrapper = path.join(toolsDirectory, 'ln');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(lnWrapper, `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+target_path="\${@: -1}"
+if [[ "$source_path" == /proc/*/fd/3 ]] && [[ "$target_path" == */TASKS.md ]] && [ ! -e "$WORKBENCH_TEST_TASK_INSTALL_MARKER" ]; then
+  : > "$WORKBENCH_TEST_TASK_INSTALL_MARKER"
+  printf '# Tasks\\n' > "$WORKBENCH_TEST_TASK_INSTALL_TARGET"
+fi
+exec /usr/bin/ln "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_TASK_INSTALL_MARKER,
+      tasks: process.env.WORKBENCH_TEST_TASK_INSTALL_TARGET,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_TASK_INSTALL_MARKER = marker;
+    process.env.WORKBENCH_TEST_TASK_INSTALL_TARGET = tasksPath;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'No-clobber child',
+        priority: 'P1',
+        parentId: 'P1-004',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }), /existing parent/);
+      assert.equal(fs.existsSync(marker), true, 'The test must create a competing task file before installation.');
+      assert.equal(fs.readFileSync(tasksPath, 'utf8'), '# Tasks\n');
+      assert.deepEqual(fs.readdirSync(path.join(directory, '.workbench/task-images')), []);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_TASK_INSTALL_MARKER;
+      else process.env.WORKBENCH_TEST_TASK_INSTALL_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_TASK_INSTALL_TARGET;
+      else process.env.WORKBENCH_TEST_TASK_INSTALL_TARGET = oldEnvironment.tasks;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('retries an atomic task update without losing a compatible concurrent edit', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-task-update-retry-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const mvWrapper = path.join(toolsDirectory, 'mv');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(mvWrapper, `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+claim_path="\${@: -1}"
+if [[ "$source_path" == */TASKS.md ]] && [[ "$claim_path" == */.TASKS.md.workbench-previous-* ]] && [ ! -e "$WORKBENCH_TEST_UPDATE_RETRY_MARKER" ]; then
+  : > "$WORKBENCH_TEST_UPDATE_RETRY_MARKER"
+  printf '\\nConcurrent user note.\\n' >> "$WORKBENCH_TEST_UPDATE_RETRY_TASKS"
+  chmod 0600 "$WORKBENCH_TEST_UPDATE_RETRY_TASKS"
+fi
+exec /usr/bin/mv "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_UPDATE_RETRY_MARKER,
+      tasks: process.env.WORKBENCH_TEST_UPDATE_RETRY_TASKS,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_UPDATE_RETRY_MARKER = marker;
+    process.env.WORKBENCH_TEST_UPDATE_RETRY_TASKS = tasksPath;
+    try {
+      const updated = await addProjectTask(workspace, {
+        title: 'Retried child',
+        priority: 'P1',
+        parentId: 'P1-004',
+      });
+      assert.equal(fs.existsSync(marker), true, 'The test must edit the task file immediately before the first claim.');
+      assert.equal(updated.tasks.at(-1)?.title, 'Retried child');
+      const markdown = fs.readFileSync(tasksPath, 'utf8');
+      assert.match(markdown, /Concurrent user note\./);
+      assert.equal((markdown.match(/^### WB-005 — Retried child$/gm) ?? []).length, 1);
+      assert.equal(fs.statSync(tasksPath).mode & 0o777, 0o600);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_UPDATE_RETRY_MARKER;
+      else process.env.WORKBENCH_TEST_UPDATE_RETRY_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_UPDATE_RETRY_TASKS;
+      else process.env.WORKBENCH_TEST_UPDATE_RETRY_TASKS = oldEnvironment.tasks;
       fs.rmSync(toolsDirectory, { recursive: true, force: true });
     }
   });

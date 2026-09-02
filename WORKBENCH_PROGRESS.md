@@ -1647,3 +1647,51 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Review the scoped diff, commit and push this correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 23:38 JST — P0-002 atomic task-file update review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `8e9d85a` passed both workflow events: Linux verification completed in 20 and 25 seconds, and Windows verification/package jobs completed in 1 minute 48 seconds and 2 minutes 13 seconds. All 27 prior review threads were resolved with evidence.
+- Automated Codex review completed on `8e9d85a` and opened one P2 finding: the new digest still preceded the duplicate-ID check and in-place append, leaving a narrow race for an editor that does not honor Workbench's private lock.
+- The finding is accepted. `node /tmp/workbench-p0-atomic-parent-race-repro.cjs` atomically replaced `TASKS.md` immediately after the pre-fix digest check. Before this correction the call returned success, appended an orphaned `WB-005`, retained its image, reported `safe: false`, and exited `1`.
+
+**Scoped correction**
+
+- Task creation now builds a complete candidate from the exact validated snapshot and task block, verifies its byte count and SHA-256 digest through a pinned descriptor, and preserves the source task file's mode.
+- Under the existing workspace lock, Workbench revalidates the current task inode and content, atomically moves that exact entry to a private claim, revalidates the claimed handle, and no-clobber-links the pinned candidate into `TASKS.md`. A replacement before the claim is restored rather than overwritten; a competing target prevents installation.
+- Stale transactions re-read and reparse the editor's current Markdown. Compatible edits retry without loss; removing, duplicating, or cycling the selected parent rejects the child and cleans its staged images. Successful candidate installation remains the commit point, and the fallback result now includes any compatible task-file changes observed during retry.
+- Focused regressions cover an in-place edit during image preparation, an atomic replacement at the claim boundary, preservation plus retry of a compatible concurrent note, six simultaneous Workbench processes, read-only rejection, final mode/link invariants, and transaction-file cleanup. The first prototype's unconditional four-attempt guard was rejected by existing watcher, permission, and six-process cases before delivery; the final bounded transaction passes all of them.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 20 WSL project-system cases passed, including both task-file races, compatible retry, six-process contention, read-only failure, and prior filesystem/image regressions; exit `0`. |
+| passed | three parallel repetitions of `node dist-test/tests/wsl/project-system.test.js` | Each repetition passed all 20 cases with zero failures; exits `0`. |
+| passed | `node /tmp/workbench-p0-parent-race-repro.cjs` and `node /tmp/workbench-p0-atomic-parent-race-repro.cjs` | Both exact races rejected with `Choose an existing parent task.`; the manual `# Tasks` edit remained exact, no image existed, `safe` was `true`, and both commands exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; the atomic replacement reported `parentRaceSafe: true`, and `temporaryRaceSafe` plus all prior PNG/JPEG/WebP, anchored-path, named-parent, metadata-swap, and hard-link checks were true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-atomic-task-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; `pgrep -a -x electron` returned no remaining process. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Review the complete transaction diff, commit and push the correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
+- Blocker: none established.
+
+### 2026-09-02 23:41 JST — P0-002 final no-clobber transaction coverage
+
+- Final-diff reflection added one more commit-boundary case: an editor creates a new canonical `TASKS.md` after Workbench claims the validated version but before candidate installation. The pinned candidate uses a no-clobber link, so Workbench preserves that new file, removes the now-obsolete validated claim and candidate, rejects the invalidated child, and cleans its image.
+- `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` passed all 21 focused WSL cases; `npm run check` passed strict types and all 14 full test files; `npm run dist:dir` packaged the exact final tree; and the packaged-ASAR validator again reported `parentRaceSafe: true` with every prior validation flag true. The exact final app remained stable for five seconds until intentional SIGINT and left no Electron process. All commands exited `0` except the expected `pgrep -a -x electron` no-match exit `1`.
+- The final scoped diff passes `git diff --check`. Next action remains commit, push, review-thread resolution, green exact-head CI, and clean exact-head automated re-review.
+
+### 2026-09-02 23:44 JST — P0-002 frozen atomic-update verification
+
+- The frozen transaction also compares the source mode before and after claiming the inode; the compatible-edit regression changes both Markdown and mode, then proves the retry retains the note and final `0600` permissions. The final focused run passed all 21 WSL cases and both standalone race reproducers with `safe: true`.
+- On this exact source tree, `npm run check` passed strict types and all 14 full test files, `npm run dist:dir` completed, and the packaged-ASAR validator reported every flag true including `parentRaceSafe` and `temporaryRaceSafe`. `npm start -- --user-data-dir=/tmp/workbench-p0-atomic-task-exact-profile --enable-logging=stderr` remained stable for five seconds until intentional SIGINT, after which no Electron process remained.
+- No further source or test edits followed these checks. Next action is the delivery/re-review gate; blocker: none established.

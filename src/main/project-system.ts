@@ -29,6 +29,8 @@ const MAX_PNG_INFLATED_BYTES = 160 * 1024 * 1024;
 const MAX_WEBP_IMAGE_CHUNKS = 128;
 const MAX_PENDING_PROJECT_IMAGE_DECODES = 8;
 const PROJECT_IMAGE_DECODE_TIMEOUT_MS = 15_000;
+const PROJECT_TASK_COMMIT_ATTEMPTS = 16;
+const PROJECT_TASKS_CHANGED_ERROR = 'TASKS.md changed while the task was being prepared';
 const projectTaskMutationQueues = new Map<string, Promise<ProjectSystemStatus>>();
 let pendingProjectImageDecodes = 0;
 let projectImageDecodeQueue: Promise<void> = Promise.resolve();
@@ -919,7 +921,7 @@ async function runProjectScript(workspace: Workspace, statements: string[], inpu
   return result.stdout;
 }
 
-function projectTasksFileHandleStatements(mode: 'read' | 'append'): string[] {
+function projectTasksFileHandleStatements(mode: 'read' | 'update'): string[] {
   const descriptor = 4;
   return [
     'target="$root_fd/TASKS.md"',
@@ -930,9 +932,7 @@ function projectTasksFileHandleStatements(mode: 'read' | 'append'): string[] {
     'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
     'if [ ! -f "$target" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
     'target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md is unsafe" >&2; exit 4; }',
-    mode === 'read'
-      ? `exec ${descriptor}< "$target" || { printf "TASKS.md cannot be opened" >&2; exit 4; }`
-      : `exec ${descriptor}>> "$target" || { printf "TASKS.md cannot be opened" >&2; exit 4; }`,
+    `exec ${descriptor}< "$target" || { printf "TASKS.md cannot be opened" >&2; exit 4; }`,
     `target_fd="/proc/$$/fd/${descriptor}"`,
     'opened_target_real=$(realpath -- "$target_fd") || { printf "TASKS.md handle cannot be resolved" >&2; exit 4; }',
     'opened_target_identity=$(stat -Lc "%d:%i" -- "$target_fd" 2>/dev/null) || { printf "TASKS.md is unsafe" >&2; exit 4; }',
@@ -1154,6 +1154,93 @@ async function cleanupProjectTaskImages(
   ]);
 }
 
+async function commitProjectTask(
+  workspace: Workspace,
+  taskId: string,
+  task: string,
+  parentId: string,
+  initialTasksMarkdown: string,
+): Promise<ProjectTask[]> {
+  let tasksMarkdown = initialTasksMarkdown;
+  const appendBytes = Buffer.from(`\n${task}\n`, 'utf8');
+  for (let attempt = 0; attempt < PROJECT_TASK_COMMIT_ATTEMPTS; attempt += 1) {
+    const tasks = parseProjectTasks(tasksMarkdown);
+    if (parentId && !hasValidProjectTaskParentChain(tasks, parentId)) {
+      throw new Error('Choose an existing parent task.');
+    }
+    const currentHash = createHash('sha256').update(tasksMarkdown).digest('hex');
+    const committedHash = createHash('sha256').update(tasksMarkdown).update(appendBytes).digest('hex');
+    const committedBytes = Buffer.byteLength(tasksMarkdown, 'utf8') + appendBytes.length;
+    try {
+      // Editors do not honor Workbench's advisory lock. Build a pinned complete candidate first,
+      // atomically claim the exact validated directory entry, then install without clobbering a
+      // replacement. A stale claim is restored and retried from the editor's current contents.
+      await runProjectScript(workspace, [
+        ...projectTaskLockStatements(),
+        ...projectTasksFileHandleStatements('update'),
+        'if [ ! -w "$target_fd" ]; then printf "TASKS.md cannot be opened: Permission denied" >&2; exit 4; fi',
+        `candidate="$root_fd/.TASKS.md.workbench-next-${taskId}.$$"`,
+        `claim="$root_fd/.TASKS.md.workbench-previous-${taskId}.$$"`,
+        'if [ -e "$candidate" ] || [ -L "$candidate" ] || [ -e "$claim" ] || [ -L "$claim" ]; then printf "Task update temporary path already exists" >&2; exit 5; fi',
+        'committed=0',
+        'claim_valid=0',
+        'rollback_task_update() { rm -f -- "$candidate" 2>/dev/null || true; if [ "$committed" -eq 1 ] || { [ "$claim_valid" -eq 1 ] && { [ -e "$target" ] || [ -L "$target" ]; }; }; then rm -f -- "$claim" 2>/dev/null || true; elif { [ -e "$claim" ] || [ -L "$claim" ]; } && [ ! -e "$target" ] && [ ! -L "$target" ]; then if [ -n "${claim_fd:-}" ] && [ -f "$claim_fd" ] && ln -LT -- "$claim_fd" "$target" 2>/dev/null; then rm -f -- "$claim" 2>/dev/null || true; else mv -nT -- "$claim" "$target" 2>/dev/null || true; fi; fi; }',
+        'trap \'rollback_task_update\' EXIT',
+        'target_mode=$(stat -Lc %a -- "$target_fd" 2>/dev/null) || { printf "TASKS.md permissions cannot be read" >&2; exit 4; }',
+        'current_tasks_hash=$(sha256sum -- "$target_fd" 2>/dev/null) || { printf "TASKS.md could not be revalidated" >&2; exit 5; }',
+        'current_tasks_hash=${current_tasks_hash%% *}',
+        `if [ "$current_tasks_hash" != ${shellQuote(currentHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_fd"; then printf "Task id already exists" >&2; exit 5; fi`,
+        'umask 077',
+        'set -C',
+        'exec 3> "$candidate" || { set +C; printf "Task update could not be created" >&2; exit 5; }',
+        'set +C',
+        'candidate_fd="/proc/$$/fd/3"',
+        'candidate_identity=$(stat -Lc "%d:%i" -- "$candidate_fd" 2>/dev/null) || { printf "Task update is unsafe" >&2; exit 5; }',
+        'if [ ! -f "$candidate_fd" ] || [ "$(stat -Lc %h -- "$candidate_fd" 2>/dev/null)" != 1 ]; then printf "Task update is unsafe" >&2; exit 5; fi',
+        'cat -- "$target_fd" >&3 || { printf "TASKS.md could not be copied" >&2; exit 5; }',
+        'cat >&3 || { printf "Task update could not be written" >&2; exit 5; }',
+        `candidate_size=$(stat -Lc %s -- "$candidate_fd" 2>/dev/null) || { printf "Task update is unsafe" >&2; exit 5; }; if [ "$candidate_size" -ne ${committedBytes} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'candidate_hash=$(sha256sum -- "$candidate_fd" 2>/dev/null) || { printf "Task update could not be validated" >&2; exit 5; }',
+        'candidate_hash=${candidate_hash%% *}',
+        `if [ "$candidate_hash" != ${shellQuote(committedHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'chmod "$target_mode" "$candidate_fd" || { printf "Task update permissions could not be set" >&2; exit 5; }',
+        `if [ -L "$target" ] || [ ! -f "$target" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'current_target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'current_target_mode=$(stat -Lc %a -- "$target_fd" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'current_tasks_hash=$(sha256sum -- "$target_fd" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'current_tasks_hash=${current_tasks_hash%% *}',
+        `if [ "$current_target_identity" != "$target_identity" ] || [ "$(stat -Lc %h -- "$target" 2>/dev/null)" != 1 ] || [ "$current_target_mode" != "$target_mode" ] || [ "$current_tasks_hash" != ${shellQuote(currentHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'mv -nT -- "$target" "$claim" || { printf "TASKS.md could not be claimed for update" >&2; exit 5; }',
+        `if [ -e "$target" ] || [ -L "$target" ] || [ -L "$claim" ] || [ ! -f "$claim" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'claim_identity=$(stat -Lc "%d:%i" -- "$claim" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'exec 6< "$claim" || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'claim_fd="/proc/$$/fd/6"',
+        'opened_claim_identity=$(stat -Lc "%d:%i" -- "$claim_fd" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'claim_mode=$(stat -Lc %a -- "$claim_fd" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'claim_hash=$(sha256sum -- "$claim_fd" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
+        'claim_hash=${claim_hash%% *}',
+        `if [ "$opened_claim_identity" != "$claim_identity" ] || [ "$claim_identity" != "$target_identity" ] || [ ! -f "$claim_fd" ] || [ "$(stat -Lc %h -- "$claim_fd" 2>/dev/null)" != 1 ] || [ "$claim_mode" != "$target_mode" ] || [ "$claim_hash" != ${shellQuote(currentHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'claim_valid=1',
+        `if ! ln -LT -- "$candidate_fd" "$target" 2>/dev/null; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'committed=1',
+        'rm -f -- "$candidate" 2>/dev/null || true',
+        'rm -f -- "$claim" 2>/dev/null || true',
+        'exec 6<&-',
+        'exec 3>&-',
+        'trap - EXIT',
+      ], appendBytes);
+      return tasks;
+    } catch (error) {
+      if (!(error instanceof Error)
+        || error.message !== PROJECT_TASKS_CHANGED_ERROR
+        || attempt === PROJECT_TASK_COMMIT_ATTEMPTS - 1) throw error;
+      tasksMarkdown = await readTasks(workspace);
+    }
+  }
+  throw new Error(PROJECT_TASKS_CHANGED_ERROR);
+}
+
 async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft): Promise<ProjectSystemStatus> {
   if (!draft || typeof draft !== 'object') throw new Error('Task details are invalid.');
   if (draft.priority !== 'P0' && draft.priority !== 'P1' && draft.priority !== 'P2' && draft.priority !== 'P3') {
@@ -1167,7 +1254,6 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
   if (parentId && !hasValidProjectTaskParentChain(existingTasks, parentId)) {
     throw new Error('Choose an existing parent task.');
   }
-  const existingTasksHash = parentId ? createHash('sha256').update(existingTasksMarkdown).digest('hex') : '';
   const rawImages = Array.isArray(draft.images) ? draft.images : [];
   if (rawImages.length > MAX_TASK_IMAGES) throw new Error(`Attach no more than ${MAX_TASK_IMAGES} images.`);
   const images: ValidatedProjectImage[] = [];
@@ -1184,13 +1270,7 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
   const task = formatProjectTask({ ...draft, parentId: parentId || null }, taskId, attachments);
   const createdTask = parseProjectTasks(task)[0];
   if (!createdTask || createdTask.id !== taskId) throw new Error('Task details could not be formatted.');
-  const committedTasks = [...existingTasks, createdTask];
-  const committedStatus: ProjectSystemStatus = {
-    files: initializedStatus.files,
-    tasks: committedTasks,
-    nextTaskId: nextProjectTaskId(committedTasks, Number(/-(\d+)$/.exec(taskId)?.[1] ?? 0)),
-    ready: initializedStatus.ready,
-  };
+  let committedTasks = [...existingTasks, createdTask];
   const written: ProjectTaskAttachment[] = [];
   try {
     for (const [index, image] of images.entries()) {
@@ -1199,17 +1279,8 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
       await writeProjectTaskImage(workspace, attachment, image.bytes);
       written.push(attachment);
     }
-    await runProjectScript(workspace, [
-      ...projectTaskLockStatements(),
-      ...projectTasksFileHandleStatements('append'),
-      ...(parentId ? [
-        'current_tasks_hash=$(sha256sum -- "$target_fd" 2>/dev/null) || { printf "TASKS.md could not be revalidated" >&2; exit 5; }',
-        'current_tasks_hash=${current_tasks_hash%% *}',
-        `if [ "$current_tasks_hash" != ${shellQuote(existingTasksHash)} ]; then printf "TASKS.md changed while the task was being prepared" >&2; exit 5; fi`,
-      ] : []),
-      `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_fd"; then printf "Task id already exists" >&2; exit 5; fi`,
-      `printf '\\n%s\\n' ${shellQuote(task)} >&4`,
-    ]);
+    const committedBaseTasks = await commitProjectTask(workspace, taskId, task, parentId, existingTasksMarkdown);
+    committedTasks = [...committedBaseTasks, createdTask];
   } catch (error) {
     try {
       await cleanupProjectTaskImages(workspace, written);
@@ -1220,6 +1291,12 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     }
     throw error;
   }
+  const committedStatus: ProjectSystemStatus = {
+    files: initializedStatus.files,
+    tasks: committedTasks,
+    nextTaskId: nextProjectTaskId(committedTasks, Number(/-(\d+)$/.exec(taskId)?.[1] ?? 0)),
+    ready: initializedStatus.ready,
+  };
   try {
     return await inspectProjectSystem(workspace);
   } catch {
