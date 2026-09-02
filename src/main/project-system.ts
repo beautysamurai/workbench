@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type {
@@ -1160,11 +1161,13 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
   }
   if (!cleanSingleLine(draft.title, 180)) throw new Error('Enter a task title.');
   const initializedStatus = await initializeProjectSystem(workspace);
-  const existingTasks = parseProjectTasks(await readTasks(workspace));
+  const existingTasksMarkdown = await readTasks(workspace);
+  const existingTasks = parseProjectTasks(existingTasksMarkdown);
   const parentId = cleanSingleLine(draft.parentId, 100);
   if (parentId && !hasValidProjectTaskParentChain(existingTasks, parentId)) {
     throw new Error('Choose an existing parent task.');
   }
+  const existingTasksHash = parentId ? createHash('sha256').update(existingTasksMarkdown).digest('hex') : '';
   const rawImages = Array.isArray(draft.images) ? draft.images : [];
   if (rawImages.length > MAX_TASK_IMAGES) throw new Error(`Attach no more than ${MAX_TASK_IMAGES} images.`);
   const images: ValidatedProjectImage[] = [];
@@ -1199,6 +1202,11 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
     await runProjectScript(workspace, [
       ...projectTaskLockStatements(),
       ...projectTasksFileHandleStatements('append'),
+      ...(parentId ? [
+        'current_tasks_hash=$(sha256sum -- "$target_fd" 2>/dev/null) || { printf "TASKS.md could not be revalidated" >&2; exit 5; }',
+        'current_tasks_hash=${current_tasks_hash%% *}',
+        `if [ "$current_tasks_hash" != ${shellQuote(existingTasksHash)} ]; then printf "TASKS.md changed while the task was being prepared" >&2; exit 5; fi`,
+      ] : []),
       `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_fd"; then printf "Task id already exists" >&2; exit 5; fi`,
       `printf '\\n%s\\n' ${shellQuote(task)} >&4`,
     ]);

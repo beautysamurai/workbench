@@ -1613,3 +1613,37 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Review the final scoped diff, commit and push the correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 23:04 JST — P0-002 accepted stale-parent append review finding
+
+**Exact-head review and reproduction**
+
+- Exact head `82f4c59` passed both workflow events: Linux verification completed in 21 and 22 seconds, and Windows verification/package jobs completed in 1 minute 53 seconds and 2 minutes 8 seconds. All 26 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `82f4c59` and opened one P2 finding: a selected parent was validated before image preparation, but the locked append did not revalidate `TASKS.md`, so an intervening manual parent removal or duplicate could commit an unusable child.
+- The finding is accepted. `node /tmp/workbench-p0-parent-race-repro.cjs` deterministically removed `P1-004` after the image stream completed. Before the correction, the call returned success, appended `WB-005` with the now-missing parent, retained its image, reported `safe: false`, and exited `1`.
+
+**Scoped correction**
+
+- Child-task preparation now records a SHA-256 digest of the exact `TASKS.md` snapshot whose full parent chain passed uniqueness and cycle validation. After taking the existing workspace task lock and opening the pinned append handle, Workbench hashes that same inode and rejects if it changed before writing.
+- The existing failure path removes every image written for the rejected child while preserving the user's intervening Markdown edit. Parentless additions retain their existing concurrent-process behavior because they cannot become orphaned through this race and still use the locked duplicate-ID check.
+- The deterministic WSL regression removes the parent during image writing and verifies the edit remains exact, the child is absent, and the image directory is empty. An initially broader stale-file guard exposed and was narrowed by the existing cross-process test, preserving simultaneous parentless additions and durable unique IDs.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 18 WSL project-system cases passed, including stale-parent rejection and existing in-process/cross-process concurrency; exit `0`. |
+| passed | `node /tmp/workbench-p0-parent-race-repro.cjs` | The exact race rejected with `TASKS.md changed while the task was being prepared`; the manual edit remained, no image existed, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `parentRaceSafe`, `temporaryRaceSafe`, and all prior PNG/JPEG/WebP, anchored-path, named-parent, metadata-swap, and hard-link checks were true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-parent-race-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; `pgrep -a -x electron` returned no remaining process. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Review the scoped diff, commit and push this correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
+- Blocker: none established.

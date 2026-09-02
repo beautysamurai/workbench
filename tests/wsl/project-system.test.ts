@@ -118,6 +118,53 @@ test('allows an unambiguous named legacy task to become a parent', async () => {
   });
 });
 
+test('rejects a stale parent snapshot before appending a prepared child', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-parent-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const catWrapper = path.join(toolsDirectory, 'cat');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(catWrapper, `#!/bin/bash
+set -u
+/usr/bin/cat "$@"
+status=$?
+if [ "$status" -eq 0 ] && [ "$#" -eq 0 ] && [ ! -e "$WORKBENCH_TEST_PARENT_RACE_MARKER" ]; then
+  : > "$WORKBENCH_TEST_PARENT_RACE_MARKER"
+  printf '# Tasks\\n' > "$WORKBENCH_TEST_PARENT_RACE_TASKS"
+fi
+exit "$status"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_PARENT_RACE_MARKER,
+      tasks: process.env.WORKBENCH_TEST_PARENT_RACE_TASKS,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_PARENT_RACE_MARKER = marker;
+    process.env.WORKBENCH_TEST_PARENT_RACE_TASKS = tasksPath;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'Racing child',
+        priority: 'P1',
+        parentId: 'P1-004',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }), /TASKS\.md changed while the task was being prepared/);
+      assert.equal(fs.existsSync(marker), true, 'The test must remove the parent after image writing.');
+      assert.equal(fs.readFileSync(tasksPath, 'utf8'), '# Tasks\n');
+      assert.deepEqual(fs.readdirSync(path.join(directory, '.workbench/task-images')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_PARENT_RACE_MARKER;
+      else process.env.WORKBENCH_TEST_PARENT_RACE_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_PARENT_RACE_TASKS;
+      else process.env.WORKBENCH_TEST_PARENT_RACE_TASKS = oldEnvironment.tasks;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('serializes concurrent additions so automatically assigned ids remain unique', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const [first, second] = await Promise.all([
