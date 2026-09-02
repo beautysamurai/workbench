@@ -17,6 +17,8 @@ import { runWslCommand } from './wsl';
 const PROJECT_FILES = ['AGENTS.md', 'TASKS.md', 'WORKBENCH_PROGRESS.md'] as const;
 const NUMERIC_TASK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*-\d+$/;
 const LEGACY_RANDOM_TASK_ID_PATTERN = /^WB-[A-F0-9]{8}$/i;
+const LEGACY_UUID_TASK_ID_PATTERN = /^[A-F0-9]{8}-(?:[A-F0-9]{4}-){3}[A-F0-9]{12}$/i;
+const PROJECT_TASK_PLACEHOLDER_ID_PATTERN = /^(?:WB-NNN|P\?-NNN)$/i;
 const PROJECT_IMAGE_DIRECTORY = '.workbench/task-images';
 const MAX_TASK_IMAGES = 4;
 const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -71,6 +73,10 @@ function normalizeTaskState(value: string): ProjectTaskState {
 
 function isProjectTaskId(value: string): boolean {
   return NUMERIC_TASK_ID_PATTERN.test(value) || LEGACY_RANDOM_TASK_ID_PATTERN.test(value);
+}
+
+function isVisibleProjectTaskId(value: string): boolean {
+  return Boolean(value) && !PROJECT_TASK_PLACEHOLDER_ID_PATTERN.test(value);
 }
 
 function normalizeTaskPriority(value: unknown, legacyId = ''): ProjectTaskPriority {
@@ -138,12 +144,14 @@ export function parseProjectTasks(markdown: string): ProjectTask[] {
       acceptanceCriteria: parseAcceptanceCriteria(block),
       attachments: parseAttachments(block),
     };
-  }).filter((task) => isProjectTaskId(task.id) && task.title);
+  }).filter((task) => isVisibleProjectTaskId(task.id) && task.title);
 }
 
 export function nextProjectTaskId(tasks: ProjectTask[], highWater = 0): string {
   const maximum = tasks.reduce((current, task) => {
-    const suffix = Number(/-(\d+)$/.exec(task.id)?.[1] ?? 0);
+    const suffix = NUMERIC_TASK_ID_PATTERN.test(task.id) && !LEGACY_UUID_TASK_ID_PATTERN.test(task.id)
+      ? Number(/-(\d+)$/.exec(task.id)?.[1] ?? 0)
+      : 0;
     return Number.isSafeInteger(suffix) ? Math.max(current, suffix) : current;
   }, highWater);
   if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum >= Number.MAX_SAFE_INTEGER) {
@@ -1020,6 +1028,10 @@ function projectImageDirectoryStatements(): string[] {
     'if [ -L "$image_dir" ] || [ ! -d "$image_dir" ]; then printf "Task-image directory is unsafe" >&2; exit 6; fi',
     'image_dir_real=$(realpath -- "$image_dir") || { printf "Task-image directory cannot be resolved" >&2; exit 6; }',
     'case "$image_dir_real" in "$root_real"/*) ;; *) printf "Task-image directory resolves outside the workspace" >&2; exit 6 ;; esac',
+    'exec 8< "$image_dir_real" || { printf "Task-image directory cannot be opened" >&2; exit 6; }',
+    'image_dir_fd="/proc/$$/fd/8"',
+    'opened_image_dir_real=$(realpath -- "$image_dir_fd") || { printf "Task-image directory handle cannot be resolved" >&2; exit 6; }',
+    'if [ "$opened_image_dir_real" != "$image_dir_real" ]; then printf "Task-image directory changed during validation" >&2; exit 6; fi',
   ];
 }
 
@@ -1065,9 +1077,9 @@ async function writeProjectTaskImage(
   const filename = taskImageFilename(attachment);
   await runProjectScript(workspace, [
     ...projectImageDirectoryStatements(),
-    `target="$image_dir_real/${filename}"`,
+    `target="$image_dir_fd/${filename}"`,
     'if [ -e "$target" ] || [ -L "$target" ]; then printf "Task image already exists" >&2; exit 7; fi',
-    `temporary="$image_dir_real/.${filename}.$$"`,
+    `temporary="$image_dir_fd/.${filename}.$$"`,
     'trap \'rm -f -- "$temporary"\' EXIT',
     'umask 077',
     'set -C',
@@ -1089,7 +1101,7 @@ async function cleanupProjectTaskImages(
   const filenames = attachments.map(taskImageFilename);
   await runProjectScript(workspace, [
     ...projectImageDirectoryStatements(),
-    ...filenames.map((filename) => `rm -f -- "$image_dir_real/${filename}"`),
+    ...filenames.map((filename) => `rm -f -- "$image_dir_fd/${filename}"`),
   ]);
 }
 

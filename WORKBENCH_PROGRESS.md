@@ -1512,3 +1512,36 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push the verified hard-link correction, resolve the accepted finding with exact evidence, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-02 21:36 JST — P0-002 accepted anchored-image and legacy-ID review findings
+
+**Exact-head review and reproduction**
+
+- Exact head `5ca637f` passed both workflow events: Linux verification completed in 16 and 17 seconds, and Windows verification/package jobs completed in 1 minute 25 seconds and 1 minute 49 seconds. All 21 prior review threads were resolved with commit evidence.
+- Automated Codex review completed on exact head `5ca637f` and opened two findings: P1 for image writes that reused a validated pathname and could follow a replacement symlink, and P2 for filtering arbitrary IDs that the prior task parser kept visible.
+- Both findings are accepted. A deterministic WSL reproducer shadows `realpath`, swaps the validated `.workbench/task-images` directory for an external symlink immediately after resolution, and showed the pre-fix add succeeded with `WB-001-01.png` written externally; the direct test exited `1`.
+- A focused parser reproducer supplied `TASK-A` and a full UUID. Before the correction both disappeared (`[]`), and after restoring visibility a second assertion caught the UUID suffix incorrectly producing `WB-446655440001`; each pre-fix direct run exited `1`.
+
+**Scoped correction**
+
+- The task-image directory is now opened as file descriptor 8 after path validation, the opened handle is resolved back to the expected directory, and all generated target, temporary, rename, size, permission, and cleanup paths use `/proc/$$/fd/8`. A pathname replacement after validation therefore cannot redirect writes.
+- Task parsing retains every nonempty, non-placeholder legacy heading ID. The explicit `WB-NNN` and `P?-NNN` examples remain excluded, newly formatted IDs and parent input remain constrained, and full UUIDs are excluded from numeric high-water calculation.
+- Focused tests retain named and UUID tasks without disturbing the next generated ID, and deterministically reject the image-directory swap without an external write or task append. Six repeated race-regression runs also passed.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js dist-test/tests/wsl/project-system.test.js` | Focused legacy-ID, UUID high-water, anchored image-directory, and prior image/task regressions passed; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | `npm run dist:dir` plus packaged-ASAR validator | Linux directory packaging completed. The packaged service created a real PNG task through the anchored directory handle and verified its exact bytes; all prior format, hard-link, and image-decoder checks also passed; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-anchored-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The production app remained running until intentional SIGINT; no Electron process remained. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+
+**Next action**
+
+- Review the scoped diff, commit and push both corrections, resolve both accepted findings with exact evidence, then require fresh CI and exact-head automated review.
+- Blocker: none established.

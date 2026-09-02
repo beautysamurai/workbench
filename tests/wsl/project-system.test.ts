@@ -198,6 +198,61 @@ test('rejects invalid parents and unsafe task-image directory boundaries', async
   });
 });
 
+test('does not follow an image-directory replacement after validation', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-race-outside-'));
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-race-tools-'));
+    const imageDirectory = path.join(directory, '.workbench/task-images');
+    const marker = path.join(toolsDirectory, 'swapped');
+    const realpathWrapper = path.join(toolsDirectory, 'realpath');
+    fs.writeFileSync(realpathWrapper, `#!/bin/bash
+set -eu
+actual=/usr/bin/realpath
+if [ "\${2:-}" = "\${WORKBENCH_TEST_SWAP_IMAGE_DIR:-}" ] && [ ! -e "\${WORKBENCH_TEST_SWAP_MARKER:-}" ]; then
+  resolved=$("$actual" "$@")
+  : > "$WORKBENCH_TEST_SWAP_MARKER"
+  mv -- "$WORKBENCH_TEST_SWAP_IMAGE_DIR" "$WORKBENCH_TEST_SWAP_IMAGE_DIR-original"
+  ln -s -- "$WORKBENCH_TEST_IMAGE_OUTSIDE" "$WORKBENCH_TEST_SWAP_IMAGE_DIR"
+  printf '%s\\n' "$resolved"
+  exit 0
+fi
+exec "$actual" "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      imageDirectory: process.env.WORKBENCH_TEST_SWAP_IMAGE_DIR,
+      marker: process.env.WORKBENCH_TEST_SWAP_MARKER,
+      outside: process.env.WORKBENCH_TEST_IMAGE_OUTSIDE,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_SWAP_IMAGE_DIR = imageDirectory;
+    process.env.WORKBENCH_TEST_SWAP_MARKER = marker;
+    process.env.WORKBENCH_TEST_IMAGE_OUTSIDE = outside;
+    let rejected = false;
+    try {
+      await addProjectTask(workspace, {
+        title: 'Anchored image',
+        priority: 'P1',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }).catch(() => { rejected = true; });
+      assert.equal(rejected, true, `Image write escaped into: ${fs.readdirSync(outside).join(', ')}`);
+      assert.deepEqual(fs.readdirSync(outside), []);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Anchored image/);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.imageDirectory === undefined) delete process.env.WORKBENCH_TEST_SWAP_IMAGE_DIR;
+      else process.env.WORKBENCH_TEST_SWAP_IMAGE_DIR = oldEnvironment.imageDirectory;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_SWAP_MARKER;
+      else process.env.WORKBENCH_TEST_SWAP_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.outside === undefined) delete process.env.WORKBENCH_TEST_IMAGE_OUTSIDE;
+      else process.env.WORKBENCH_TEST_IMAGE_OUTSIDE = oldEnvironment.outside;
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('refuses to follow an unsafe project-file symlink', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-outside-'));

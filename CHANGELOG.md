@@ -16,7 +16,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 ### Changed
 
 - Model and reasoning-effort choices now belong to each Codex thread instead of the whole workspace.
-- New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while legacy priority-prefixed and UUID-style IDs remain supported.
+- New GUI tasks receive durable sequential `WB-NNN` IDs independently from priority, while arbitrary existing non-placeholder heading IDs—including named, priority-prefixed, old generated, and UUID forms—remain visible.
 
 ### Fixed
 
@@ -35,3 +35,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 
 - Task images are size- and structure-validated, with bounded compressed-data decoding isolated from the Electron main thread where required, then streamed into a fixed, workspace-contained attachment directory without placing their bytes in shell arguments; task IDs are reserved under a workspace lock.
 - Multiply linked project workflow and task-metadata files are rejected so a workspace hard link cannot redirect reads, appends, or locking to an inode outside the selected workspace.
+- Task-image creation and cleanup operate through a validated Linux directory handle so replacing the checked pathname cannot redirect file operations outside the workspace.
