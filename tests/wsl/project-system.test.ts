@@ -270,6 +270,61 @@ exec /usr/bin/ln "$@"
   });
 });
 
+test('revalidates the prepared task candidate at the installation boundary', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-task-candidate-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const lnWrapper = path.join(toolsDirectory, 'ln');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(lnWrapper, `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+target_path="\${@: -1}"
+if [[ "$source_path" == /proc/*/fd/3 ]] && [[ "$target_path" == */TASKS.md ]] && [ ! -e "$WORKBENCH_TEST_CANDIDATE_MARKER" ]; then
+  : > "$WORKBENCH_TEST_CANDIDATE_MARKER"
+  for candidate in "$WORKBENCH_TEST_CANDIDATE_ROOT"/.TASKS.md.workbench-next-*; do
+    if [ -f "$candidate" ]; then
+      printf '# Concurrent candidate rewrite\\n' > "$candidate"
+      break
+    fi
+  done
+fi
+exec /usr/bin/ln "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_CANDIDATE_MARKER,
+      root: process.env.WORKBENCH_TEST_CANDIDATE_ROOT,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_CANDIDATE_MARKER = marker;
+    process.env.WORKBENCH_TEST_CANDIDATE_ROOT = directory;
+    try {
+      const updated = await addProjectTask(workspace, {
+        title: 'Candidate-safe child',
+        priority: 'P1',
+        parentId: 'P1-004',
+      });
+      assert.equal(fs.existsSync(marker), true, 'The test must rewrite the candidate during its first installation.');
+      assert.equal(updated.tasks.at(-1)?.title, 'Candidate-safe child');
+      const markdown = fs.readFileSync(tasksPath, 'utf8');
+      assert.match(markdown, /^### P1-004 — Parent$/m);
+      assert.equal((markdown.match(/^### WB-005 — Candidate-safe child$/gm) ?? []).length, 1);
+      assert.doesNotMatch(markdown, /Concurrent candidate rewrite/);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_CANDIDATE_MARKER;
+      else process.env.WORKBENCH_TEST_CANDIDATE_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.root === undefined) delete process.env.WORKBENCH_TEST_CANDIDATE_ROOT;
+      else process.env.WORKBENCH_TEST_CANDIDATE_ROOT = oldEnvironment.root;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('retries an atomic task update without losing a compatible concurrent edit', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-task-update-retry-tools-'));

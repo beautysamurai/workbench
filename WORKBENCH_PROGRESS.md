@@ -1777,3 +1777,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push the indexed-PNG correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
 - Blocker: none established.
+
+### 2026-09-03 20:47 JST — P0-002 task-candidate installation review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `f708723` passed both workflow events: Linux verification completed in 28 and 25 seconds, and Windows package jobs completed in 1 minute 32 seconds and 1 minute 54 seconds. Its indexed-PNG finding was resolved, all 31 prior threads were closed, and the merge state was clean.
+- Automated Codex review completed on that exact head and opened one P2 finding: after Workbench validated the complete task candidate, another process could still modify the predictable candidate inode before the no-clobber hard link installed it as `TASKS.md`.
+- The finding is accepted. Before correction, `node /tmp/workbench-p0-task-candidate-race-repro.cjs` rewrote the prepared candidate from an `ln` wrapper after its digest check. Task creation returned success, the rewritten bytes became the complete `TASKS.md`, `safe` was `false`, and the command exited `1`.
+
+**Scoped correction**
+
+- The task transaction now retains expected candidate size and digest alongside its pinned device/inode identity and target mode. A shared descriptor check verifies all five properties plus the exact link count after mode setting and again immediately before installation.
+- After the no-clobber link, Workbench requires the candidate descriptor and target path to identify the same two-link regular inode with the expected mode, size, and SHA-256 digest. It removes the temporary name only after that check, then repeats the descriptor/path/content validation with the required final single-link count before declaring the append committed.
+- A failed post-link validation atomically moves only the installed candidate identity to a private rejected claim, rechecks that moved inode before deleting it, and restores the descriptor-pinned prior `TASKS.md`. If a concurrent editor replaced the canonical path, the rollback preserves that competing entry instead of overwriting it.
+- The focused WSL regression changes the candidate inside the first hard-link invocation. It proves the altered inode never survives, the exact parent file is restored for retry, the child appears once with intact Markdown, and no transaction paths remain.
+- Files changed: `src/main/project-system.ts`, `tests/wsl/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/wsl/project-system.test.js` | The WSL project-system file passed with all 24 task/image/filesystem cases, including the new exact install-boundary mutation; exit `0`. |
+| passed | `node /tmp/workbench-p0-task-candidate-race-repro.cjs` | The boundary rewrite occurred, task creation retried successfully, only the intact task was committed, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `candidateRaceSafe` and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-candidate-race-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT (expected exit `130`); `pgrep -a -x electron` then returned no process (expected no-match exit `1`). Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this candidate-install correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.
