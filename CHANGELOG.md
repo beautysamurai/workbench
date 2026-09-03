@@ -42,4 +42,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Task creation now uses a validated atomic `TASKS.md` update that preserves compatible concurrent edits and rejects a child if its parent was removed or duplicated, preventing orphaned or ambiguous GUI tasks.
 - Prepared `TASKS.md` candidates are identity-, mode-, size-, link-, and digest-checked immediately around installation; a concurrently modified candidate is discarded and the exact prior task file is restored before retrying.
 - Task-ID counter candidates remain descriptor-pinned and are revalidated before, during, and after no-clobber installation; a changed candidate is rejected and the exact prior high-water counter is restored.
-- Project workflow symlinks are rejected consistently before task IDs or images are staged, and failed task cleanup preserves any attachment path that another process replaced after Workbench wrote it.
+- Project workflow symlinks are rejected consistently before task IDs or images are staged; image-install rollback and failed-task cleanup preserve any attachment path that another process replaced after Workbench wrote it.

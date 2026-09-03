@@ -1857,3 +1857,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The exact full app stayed running for five seconds until intentional SIGINT (exit `130`) and left no Electron process (`pgrep` no-match exit `1`). `npm audit --omit=dev` reported zero production vulnerabilities, and `git diff --check` passed.
 - A final rebuilt test tree ran the 25-case WSL project-system file three times in parallel; every run passed. Both standalone reproducers again reported `safe: true` with exit `0`. No source or test edit followed these checks.
 - Next action: commit and push the frozen correction, resolve both findings, then require green exact-head CI and clean exact-head automated review. Blocker: none established.
+
+### 2026-09-03 21:49 JST — P0-002 image-install rollback review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `a4c8570` passed both workflow events: Linux verification completed in 27 and 30 seconds, and Windows package jobs completed in 1 minute 50 seconds and 2 minutes 2 seconds. Automated Codex review completed on that exact commit after all 34 prior threads were resolved and opened one P2 finding.
+- The finding is accepted. After the image candidate's no-clobber link succeeded, validation failure unconditionally removed the final path; another process could replace that path before the identity check and have its replacement deleted during rollback.
+- Before correction, `node /tmp/workbench-p0-image-post-install-race-repro.mjs` forced that exact interleaving. Task creation rejected with `Task image installation changed during validation`, but the concurrent final-path replacement was gone (`targetExists: false`, `safe: false`, exit `1`).
+
+**Scoped correction**
+
+- Image installation now records when its pinned candidate has been linked and handles every later failure through one trap. Rollback atomically claims the current final-path entry into a private no-clobber path, removes the claim only when its inode is the pinned candidate, and restores a mismatching concurrent entry when the generated path remains free. If another replacement occupies the path, the claimed entry is retained rather than deleted.
+- Temporary cleanup likewise removes only the still-pinned candidate path. The previous unconditional final-path removals after identity, temporary-unlink, and final link-count validation failures are gone.
+- A deterministic WSL regression replaces `WB-001-01.png` after the link and before its first identity check, then requires the operation to reject while preserving the replacement bytes, `0600` mode, task Markdown, and a clean rollback namespace.
+- Files changed: `src/main/project-system.ts`, `tests/wsl/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `node /tmp/workbench-p0-image-post-install-race-repro.mjs` | The forced install-time replacement remained byte-for-byte intact at mode `0600`; the unsafe add rejected, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run build:tests && node --test dist-test/tests/wsl/project-system.test.js` | The focused WSL file passed; exit `0`. Running the emitted file directly confirmed all 26 named task/image/filesystem cases pass. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `installRollbackSafe`, `sequenceRaceSafe`, `candidateRaceSafe`, and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for over five seconds until intentional SIGINT (npm reported expected signal exit `1`), then `pgrep -a -x electron` found no process (expected no-match exit `1`). Existing DBus/GPU warnings were non-fatal. |
+| passed | three parallel emitted WSL runs | All three independent runs passed all 26 cases; exit `0` each. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this rollback correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.

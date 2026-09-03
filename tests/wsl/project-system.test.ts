@@ -705,6 +705,52 @@ exit "$status"
   });
 });
 
+test('preserves a concurrent final-path replacement during image installation rollback', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-install-race-tools-'));
+    const marker = path.join(toolsDirectory, 'replaced');
+    const imagePath = path.join(directory, '.workbench/task-images/WB-001-01.png');
+    const replacement = Buffer.from('concurrent final-path replacement\n', 'utf8');
+    const statWrapper = path.join(toolsDirectory, 'stat');
+    await initializeProjectSystem(workspace);
+    fs.writeFileSync(statWrapper, `#!/bin/bash
+set -u
+target="\${@: -1}"
+if [[ "$target" == /proc/*/fd/8/WB-001-01.png ]] && [ -f "$target" ] && [ ! -e "$WORKBENCH_TEST_IMAGE_INSTALL_MARKER" ]; then
+  : > "$WORKBENCH_TEST_IMAGE_INSTALL_MARKER"
+  rm -f -- "$target"
+  printf 'concurrent final-path replacement\\n' > "$target"
+  chmod 0600 "$target"
+fi
+exec /usr/bin/stat "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_IMAGE_INSTALL_MARKER,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_IMAGE_INSTALL_MARKER = marker;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'Post-install image race',
+        priority: 'P1',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }), /installation changed during validation/);
+      assert.equal(fs.existsSync(marker), true, 'The test must replace the installed image before validation.');
+      assert.deepEqual(fs.readFileSync(imagePath), replacement);
+      assert.equal(fs.statSync(imagePath).mode & 0o777, 0o600);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Post-install image race/);
+      assert.deepEqual(fs.readdirSync(path.dirname(imagePath)).filter((name) => name.includes('workbench-rejected')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_IMAGE_INSTALL_MARKER;
+      else process.env.WORKBENCH_TEST_IMAGE_INSTALL_MARKER = oldEnvironment.marker;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('does not follow a task-metadata directory replacement after lock validation', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-metadata-race-outside-'));
