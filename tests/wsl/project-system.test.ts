@@ -419,6 +419,73 @@ test('reserves ids durably after deletion and across concurrent processes', asyn
   });
 });
 
+test('pins and revalidates the task-sequence candidate during installation', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const baseline = await addProjectTask(workspace, { title: 'Baseline', priority: 'P1' });
+    assert.equal(baseline.tasks.at(-1)?.id, 'WB-001');
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-sequence-candidate-tools-'));
+    const marker = path.join(toolsDirectory, 'changed');
+    const sequencePath = path.join(directory, '.workbench/task-sequence');
+    fs.writeFileSync(path.join(toolsDirectory, 'mv'), `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+target_path="\${@: -1}"
+if [[ "$source_path" == */.task-sequence.* ]] && [[ "$target_path" == */task-sequence ]] && [ ! -e "$WORKBENCH_TEST_SEQUENCE_MARKER" ]; then
+  : > "$WORKBENCH_TEST_SEQUENCE_MARKER"
+  printf 'corrupt-counter\\n' > "$source_path"
+fi
+exec /usr/bin/mv "$@"
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(toolsDirectory, 'ln'), `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+target_path="\${@: -1}"
+if [[ "$source_path" == /proc/*/fd/3 ]] && [[ "$target_path" == */task-sequence ]] && [ ! -e "$WORKBENCH_TEST_SEQUENCE_MARKER" ]; then
+  : > "$WORKBENCH_TEST_SEQUENCE_MARKER"
+  for candidate in "$WORKBENCH_TEST_SEQUENCE_ROOT"/.workbench/.task-sequence.*; do
+    if [ -f "$candidate" ]; then
+      printf 'corrupt-counter\\n' > "$candidate"
+      break
+    fi
+  done
+fi
+exec /usr/bin/ln "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_SEQUENCE_MARKER,
+      root: process.env.WORKBENCH_TEST_SEQUENCE_ROOT,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_SEQUENCE_MARKER = marker;
+    process.env.WORKBENCH_TEST_SEQUENCE_ROOT = directory;
+    try {
+      await assert.rejects(
+        addProjectTask(workspace, { title: 'Racing reservation', priority: 'P1' }),
+        /sequence candidate changed/,
+      );
+      assert.equal(fs.existsSync(marker), true, 'The test must rewrite the sequence candidate during installation.');
+      assert.equal(fs.readFileSync(sequencePath, 'utf8'), '1\n');
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Racing reservation/);
+      const retried = await addProjectTask(workspace, { title: 'Safe retry', priority: 'P1' });
+      assert.equal(retried.tasks.at(-1)?.id, 'WB-002');
+      assert.equal(fs.readFileSync(sequencePath, 'utf8'), '2\n');
+      assert.deepEqual(
+        fs.readdirSync(path.join(directory, '.workbench')).filter((name) => name.startsWith('.task-sequence')),
+        [],
+      );
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_SEQUENCE_MARKER;
+      else process.env.WORKBENCH_TEST_SEQUENCE_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.root === undefined) delete process.env.WORKBENCH_TEST_SEQUENCE_ROOT;
+      else process.env.WORKBENCH_TEST_SEQUENCE_ROOT = oldEnvironment.root;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('rejects corrupt sequence metadata and ambiguous parent ids', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     await initializeProjectSystem(workspace);

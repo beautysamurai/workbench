@@ -25,6 +25,7 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Fixed Codex thread creation, resume, and turn startup by sending approval and thread-sandbox settings in the app-server's required wire format.
 - Removed internal Codex reasoning-status rows from conversation logs while keeping user-facing progress and results visible.
 - Images and task-field edits made while a task submission is still completing now remain in the next draft instead of being cleared with the submitted values.
+- A parent removed or made structurally invalid during project refresh now resets to the top-level option, so a successful task submission clears the matching composer draft instead of leaving duplicate-ready fields.
 - Deeply nested task queues now validate and render with linear, non-recursive traversal instead of repeatedly walking every ancestor chain.
 - Malformed PNG image-data streams and indexed samples outside their declared palette, undecodable JPEG tables/scans, corrupt lossy WebP control/token/alpha payloads, animated WebP frames outside their declared canvas, and incomplete lossless WebP streams are rejected; duplicate task IDs no longer expose a Send to Codex action that could select the wrong task.
 - Large, highly compressible PNG and lossless WebP task images now decode in a bounded worker instead of pausing the Electron main thread.
@@ -40,4 +41,5 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Temporary task-image files remain open and identity-checked from byte streaming through mode setting and final installation, so replacing the temporary pathname cannot modify an external file or install unvalidated bytes.
 - Task creation now uses a validated atomic `TASKS.md` update that preserves compatible concurrent edits and rejects a child if its parent was removed or duplicated, preventing orphaned or ambiguous GUI tasks.
 - Prepared `TASKS.md` candidates are identity-, mode-, size-, link-, and digest-checked immediately around installation; a concurrently modified candidate is discarded and the exact prior task file is restored before retrying.
+- Task-ID counter candidates remain descriptor-pinned and are revalidated before, during, and after no-clobber installation; a changed candidate is rejected and the exact prior high-water counter is restored.
 - Project workflow symlinks are rejected consistently before task IDs or images are staged, and failed task cleanup preserves any attachment path that another process replaced after Workbench wrote it.

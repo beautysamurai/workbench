@@ -7,6 +7,7 @@ import {
   findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
+  normalizeProjectTaskParentId,
   projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
 } from '../src/renderer/project-tasks';
@@ -125,4 +126,17 @@ test('distinguishes task-field edits made while a submission is pending', () => 
   };
   assert.equal(projectTaskDraftMatches({ ...submitted }, submitted), true);
   assert.equal(projectTaskDraftMatches({ ...submitted, objective: 'A newer draft edit' }, submitted), false);
+});
+
+test('normalizes a stale composer parent before submission comparison', () => {
+  const validParentIds = new Set(['WB-002']);
+  assert.equal(normalizeProjectTaskParentId('WB-002', validParentIds), 'WB-002');
+  assert.equal(normalizeProjectTaskParentId('WB-001', validParentIds), '');
+  assert.equal(normalizeProjectTaskParentId('', validParentIds), '');
+
+  const draft = {
+    title: 'Submitted child', priority: 'P1', parentId: 'WB-001', objective: '', acceptanceCriteria: '',
+  };
+  draft.parentId = normalizeProjectTaskParentId(draft.parentId, validParentIds);
+  assert.equal(projectTaskDraftMatches(draft, { ...draft, parentId: '' }), true);
 });

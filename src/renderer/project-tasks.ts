@@ -125,6 +125,13 @@ export function removeSubmittedProjectTaskImages<T>(
   return current.filter((image) => !submittedImages.has(image));
 }
 
+export function normalizeProjectTaskParentId(
+  parentId: string,
+  validParentIds: ReadonlySet<string>,
+): string {
+  return parentId && validParentIds.has(parentId) ? parentId : '';
+}
+
 interface ProjectTaskDraftFields {
   title: string;
   priority: string;

@@ -44,6 +44,7 @@ import {
   findOfferableProjectTask,
   flattenProjectTaskTree,
   mergeProjectTaskImages,
+  normalizeProjectTaskParentId,
   projectTaskDraftMatches,
   removeSubmittedProjectTaskImages,
   type ProjectTaskTreeNode,
@@ -515,6 +516,7 @@ function renderProjectPanel(workspace: Workspace): string {
   ] satisfies [ProjectTaskPriority, string][]).map(([priority, label]) =>
     `<option value="${priority}" ${draft.priority === priority ? 'selected' : ''}>${priority} · ${label}</option>`).join('');
   const validParentIds = new Set(flattenProjectTaskTree(taskTree).filter((node) => !node.issue).map((node) => node.task.id));
+  draft.parentId = normalizeProjectTaskParentId(draft.parentId, validParentIds);
   const parentOptions = tasks.filter((task) => validParentIds.has(task.id)).map((task) =>
     `<option value="${escapeHtml(task.id)}" ${draft.parentId === task.id ? 'selected' : ''}>${escapeHtml(task.id)} · ${escapeHtml(task.title)}</option>`).join('');
   const imagePreviews = renderPendingProjectTaskImages(pendingImages);

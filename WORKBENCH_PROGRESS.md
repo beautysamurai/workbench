@@ -1813,3 +1813,47 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this candidate-install correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
 - Blocker: none established.
+
+### 2026-09-03 21:31 JST — P0-002 sequence-candidate and stale-parent review corrections
+
+**Exact-head review and reproduction**
+
+- Exact head `48ae29a` passed both workflow events: Linux verification completed in 22 and 20 seconds, and Windows package jobs completed in 1 minute 51 seconds and 1 minute 56 seconds. Its task-candidate finding was resolved, all 32 prior threads were closed, and the merge state was clean.
+- Automated Codex review completed on that exact head and opened two P2 findings. The `.workbench/task-sequence` candidate was closed before `mv`, allowing another same-user process to change the future durable counter; the task composer also retained a selected parent ID after refresh removed its option, although the browser submitted the visible `None` value.
+- Both findings are accepted. Before correction, `node /tmp/workbench-p0-sequence-candidate-repro.cjs` changed the candidate at the installation command: task creation returned success, persisted `corrupt-counter`, and the next add failed with `Task id sequence is corrupt` (`safe: false`, exit `1`). `node /tmp/workbench-p0-stale-parent-repro.cjs` showed stored parent `WB-001`, submitted parent `""`, a failed post-success draft comparison, and `safe: false` (exit `1`).
+
+**Scoped corrections**
+
+- Sequence reservation now streams the complete next value through an open no-clobber descriptor. Device/inode identity, mode, exact byte count, numeric contents, path identity, and the expected link count are checked before installation, after a no-clobber link, and after the temporary path is removed.
+- An existing high-water counter remains open and hashed while its exact entry is atomically claimed. If the candidate changes, rollback atomically quarantines only that candidate identity and restores the prior counter; if another process creates the canonical path, that competing entry is preserved. A failed reservation no longer returns an ID.
+- The renderer now normalizes a composer parent against the structurally valid parent-ID set whenever the menu is rebuilt. A still-valid selection remains; a deleted, duplicate, orphaned, or cyclic option becomes the top-level empty value, so the rendered `FormData` and retained draft agree and successful submission clears normally.
+- Focused regressions mutate both the former `mv` boundary and the new descriptor-link boundary, require the prior counter value `1` to survive, and prove a clean retry receives `WB-002`; renderer coverage checks valid, stale, and empty parent normalization plus the success-comparison behavior.
+- Files changed: `src/main/project-system.ts`, `src/renderer/main.ts`, `src/renderer/project-tasks.ts`, `tests/wsl/project-system.test.ts`, `tests/project-tasks.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `node /tmp/workbench-p0-sequence-candidate-repro.cjs` | The forced rewrite was rejected, the exact prior counter remained `1`, retry created `WB-002` and persisted `2`, `safe` was `true`, and the command exited `0`. |
+| passed | `node /tmp/workbench-p0-stale-parent-repro.cjs` | The unavailable parent normalized to empty, browser and stored values matched, the draft cleared after success, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run build:tests && node --test dist-test/tests/project-tasks.test.js dist-test/tests/wsl/project-system.test.js` | All 10 renderer task cases and 25 WSL task/image/filesystem cases passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; the emitted renderer calls the new parent normalizer; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `sequenceRaceSafe`, `candidateRaceSafe`, and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for five seconds until intentional SIGINT, then left no Electron process. Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push both corrections, resolve their review threads with exact evidence, then require green CI and clean automated re-review on the new exact head.
+- Blocker: none established.
+
+### 2026-09-03 21:33 JST — P0-002 frozen sequence/parent verification
+
+- After the final source, test, and user-documentation edits, `npm run check:portable` passed all 13 portable files and `npm run check` passed all 14 full files. `npm run dist:dir` and the packaged-ASAR validator then passed with `sequenceRaceSafe`, `candidateRaceSafe`, and every prior flag true.
+- The exact full app stayed running for five seconds until intentional SIGINT (exit `130`) and left no Electron process (`pgrep` no-match exit `1`). `npm audit --omit=dev` reported zero production vulnerabilities, and `git diff --check` passed.
+- A final rebuilt test tree ran the 25-case WSL project-system file three times in parallel; every run passed. Both standalone reproducers again reported `safe: true` with exit `0`. No source or test edit followed these checks.
+- Next action: commit and push the frozen correction, resolve both findings, then require green exact-head CI and clean exact-head automated review. Blocker: none established.
