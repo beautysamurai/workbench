@@ -13,6 +13,8 @@ import type {
   PersistedState,
   ProjectSystemStatus,
   ProjectTask,
+  ProjectTaskImageDraft,
+  ProjectTaskPriority,
   SystemInspection,
   TerminalSessionInfo,
   WorkbenchApi,
@@ -36,6 +38,17 @@ import {
 import { CodexSessionPreferences } from './codex-session-preferences.js';
 import { escapeHtml, renderDiff, renderMarkdown } from './markdown.js';
 import { createMockApi } from './mock-api.js';
+import {
+  buildProjectTaskTree,
+  canOfferProjectTask,
+  findOfferableProjectTask,
+  flattenProjectTaskTree,
+  mergeProjectTaskImages,
+  normalizeProjectTaskParentId,
+  projectTaskDraftMatches,
+  removeSubmittedProjectTaskImages,
+  type ProjectTaskTreeNode,
+} from './project-tasks.js';
 import { TerminalBuffer } from './terminal-buffer.js';
 
 type MainTab = 'overview' | 'codex' | 'terminal';
@@ -89,6 +102,18 @@ interface PaletteAction {
   section: string;
 }
 
+interface PendingProjectTaskImage extends ProjectTaskImageDraft {
+  previewUrl: string;
+}
+
+interface ProjectTaskComposerDraft {
+  title: string;
+  priority: ProjectTaskPriority;
+  parentId: string;
+  objective: string;
+  acceptanceCriteria: string;
+}
+
 interface UiState {
   data: PersistedState | null;
   system: SystemInspection | null;
@@ -107,6 +132,8 @@ interface UiState {
   rateLimits: Map<string, CodexRateLimits>;
   projectSystems: Map<string, ProjectSystemStatus>;
   projectLoading: Set<string>;
+  projectTaskDrafts: Map<string, ProjectTaskComposerDraft>;
+  projectTaskImages: Map<string, PendingProjectTaskImage[]>;
   threadLists: Map<string, CodexThreadSummary[]>;
   threadsLoading: Set<string>;
   activeThread: Map<string, string>;
@@ -148,6 +175,8 @@ const ui: UiState = {
   rateLimits: new Map(),
   projectSystems: new Map(),
   projectLoading: new Set(),
+  projectTaskDrafts: new Map(),
+  projectTaskImages: new Map(),
   threadLists: new Map(),
   threadsLoading: new Set(),
   activeThread: new Map(),
@@ -276,16 +305,22 @@ interface FocusSnapshot {
 
 function captureFocus(): FocusSnapshot | null {
   const active = document.activeElement;
-  if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) || !active.id) return null;
-  return { id: active.id, start: active.selectionStart, end: active.selectionEnd };
+  if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) || !active.id) return null;
+  return {
+    id: active.id,
+    start: active instanceof HTMLSelectElement ? null : active.selectionStart,
+    end: active instanceof HTMLSelectElement ? null : active.selectionEnd,
+  };
 }
 
 function restoreFocus(snapshot: FocusSnapshot | null): void {
   if (!snapshot) return;
   const target = document.getElementById(snapshot.id);
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
   target.focus();
-  if (snapshot.start !== null && snapshot.end !== null) target.setSelectionRange(snapshot.start, snapshot.end);
+  if (!(target instanceof HTMLSelectElement) && snapshot.start !== null && snapshot.end !== null) {
+    target.setSelectionRange(snapshot.start, snapshot.end);
+  }
 }
 
 function renderTitlebar(): string {
@@ -469,10 +504,22 @@ function renderProjectPanel(workspace: Workspace): string {
       ${icon(file.exists && file.safe ? 'check' : 'alert', 11)} ${escapeHtml(file.name)}
     </span>`).join('') ?? '';
   const tasks = status?.tasks ?? [];
+  const taskTree = buildProjectTaskTree(tasks);
   const taskRows = tasks.length
-    ? tasks.slice(0, 10).map(renderProjectTask).join('')
-    : `<div class="empty-inline">No queued tasks yet. Add one here instead of editing TASKS.md.</div>`;
+    ? taskTree.map(renderProjectTaskNode).join('')
+    : `<li class="empty-inline">No queued tasks yet. Add one here instead of editing TASKS.md.</li>`;
   const unsafeFile = status?.files.find((file) => file.exists && !file.safe);
+  const draft = projectTaskComposerDraft(workspace.id);
+  const pendingImages = ui.projectTaskImages.get(workspace.id) ?? [];
+  const priorityOptions = ([
+    ['P0', 'Critical'], ['P1', 'High'], ['P2', 'Normal'], ['P3', 'Low'],
+  ] satisfies [ProjectTaskPriority, string][]).map(([priority, label]) =>
+    `<option value="${priority}" ${draft.priority === priority ? 'selected' : ''}>${priority} · ${label}</option>`).join('');
+  const validParentIds = new Set(flattenProjectTaskTree(taskTree).filter((node) => !node.issue).map((node) => node.task.id));
+  draft.parentId = normalizeProjectTaskParentId(draft.parentId, validParentIds);
+  const parentOptions = tasks.filter((task) => validParentIds.has(task.id)).map((task) =>
+    `<option value="${escapeHtml(task.id)}" ${draft.parentId === task.id ? 'selected' : ''}>${escapeHtml(task.id)} · ${escapeHtml(task.title)}</option>`).join('');
+  const imagePreviews = renderPendingProjectTaskImages(pendingImages);
 
   return `
     <section class="project-panel panel-card">
@@ -481,28 +528,96 @@ function renderProjectPanel(workspace: Workspace): string {
         <button class="button small ghost" data-action="refresh-project" ${loading ? 'disabled' : ''}>${icon('refresh', 12)} ${loading ? 'Checking…' : 'Refresh'}</button>
       </div>
       ${status ? `<div class="project-file-row">${files}</div>` : `<div class="empty-inline">${loading ? 'Inspecting project files…' : 'Project files have not been inspected.'}</div>`}
-      ${unsafeFile ? `<div class="project-warning">${icon('alert', 13)} ${escapeHtml(unsafeFile.name)} resolves outside this workspace. Workbench will not modify it.</div>` : ''}
+      ${unsafeFile ? `<div class="project-warning">${icon('alert', 13)} ${escapeHtml(unsafeFile.name)} is not a safe regular file inside this workspace. Workbench will not modify it.</div>` : ''}
       ${status && !status.ready && !unsafeFile ? `<div class="project-setup"><p>Create the missing Markdown project guide, task queue, and progress log without replacing existing files.</p><button class="button small primary" data-action="initialize-project" ${loading ? 'disabled' : ''}>${icon('plus', 12)} Set up project files</button></div>` : ''}
       <div class="project-task-layout">
         <form class="task-compose" id="project-task-form">
-          <label for="project-task-title">Add a task</label>
-          <input id="project-task-title" name="title" required maxlength="180" placeholder="What should Codex accomplish?" />
-          <textarea name="objective" maxlength="500" placeholder="Optional outcome or acceptance detail"></textarea>
+          <div class="task-compose-heading"><label for="project-task-title">Add a task</label><span>ID assigned automatically · ${escapeHtml(status?.nextTaskId ?? 'WB-001')}</span></div>
+          <input id="project-task-title" name="title" required maxlength="180" value="${escapeHtml(draft.title)}" placeholder="What should Codex accomplish?" />
+          <div class="task-field-grid">
+            <label for="project-task-priority"><span>Priority</span><select id="project-task-priority" name="priority" required>
+              ${priorityOptions}
+            </select></label>
+            <label for="project-task-parent"><span>Parent task</span><select id="project-task-parent" name="parentId"><option value="" ${draft.parentId ? '' : 'selected'}>None · top level</option>${parentOptions}</select></label>
+          </div>
+          <label class="task-text-field" for="project-task-objective"><span>Objective</span><textarea id="project-task-objective" name="objective" maxlength="500" placeholder="Optional implementation detail or outcome">${escapeHtml(draft.objective)}</textarea></label>
+          <label class="task-text-field" for="project-task-criteria"><span>Acceptance criteria</span><textarea id="project-task-criteria" name="acceptanceCriteria" maxlength="1500" placeholder="One observable condition per line">${escapeHtml(draft.acceptanceCriteria)}</textarea></label>
+          <div class="task-image-dropzone" data-task-image-dropzone="true" tabindex="0" role="group" aria-label="Paste or choose task images">
+            <input id="project-task-images" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
+            <span class="task-image-dropzone-icon">${icon('image', 17)}</span>
+            <span><strong>Paste task images here</strong><small>Focus and press Ctrl+V, drop files, or choose up to 4 PNG, JPEG, or WebP images.</small></span>
+            <button class="button small ghost" type="button" data-action="choose-task-images">Choose images</button>
+          </div>
+          <div class="task-image-previews" id="task-image-previews">${imagePreviews}</div>
           <button class="button small primary" type="submit" ${loading || Boolean(unsafeFile) ? 'disabled' : ''}>${icon('plus', 12)} Add to queue</button>
         </form>
-        <div class="project-task-list">${taskRows}</div>
+        <div class="project-task-list"><ol class="project-task-tree">${taskRows}</ol></div>
       </div>
     </section>`;
 }
 
-function renderProjectTask(task: ProjectTask): string {
-  const prompt = task.objective || task.title;
-  return `
-    <article class="project-task-row">
-      <span class="task-state state-${escapeHtml(task.state.replace(/\s+/g, '-'))}">${escapeHtml(task.state)}</span>
-      <span class="project-task-copy"><strong>${escapeHtml(task.id)} · ${escapeHtml(task.title)}</strong><small>${escapeHtml(prompt)}</small></span>
-      ${task.state === 'done' ? '' : `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}">Send to Codex</button>`}
-    </article>`;
+function projectTaskComposerDraft(workspaceId: string): ProjectTaskComposerDraft {
+  let draft = ui.projectTaskDrafts.get(workspaceId);
+  if (!draft) {
+    draft = { title: '', priority: 'P2', parentId: '', objective: '', acceptanceCriteria: '' };
+    ui.projectTaskDrafts.set(workspaceId, draft);
+  }
+  return draft;
+}
+
+function renderPendingProjectTaskImages(images: PendingProjectTaskImage[]): string {
+  return images.map((image, index) => `
+    <span class="task-image-preview">
+      <img src="${escapeHtml(image.previewUrl)}" alt="Pasted task image ${index + 1}" />
+      <span>${escapeHtml(image.name || `Image ${index + 1}`)}<small>${formatBytes(image.bytes.byteLength)}</small></span>
+      <button class="icon-button" type="button" data-action="remove-task-image" data-image-index="${index}" aria-label="Remove pasted task image ${index + 1}">${icon('close', 11)}</button>
+    </span>`).join('');
+}
+
+function renderProjectTaskNode(root: ProjectTaskTreeNode): string {
+  const chunks: string[] = [];
+  const stack: Array<{ node: ProjectTaskTreeNode; closing: boolean }> = [{ node: root, closing: false }];
+  while (stack.length) {
+    const frame = stack.pop();
+    if (!frame) continue;
+    if (frame.closing) {
+      chunks.push('</ol></li>');
+      continue;
+    }
+    const { node } = frame;
+    const task = node.task;
+    const prompt = task.objective || task.title;
+    chunks.push(`
+      <li class="project-task-node">
+        <article class="project-task-row">
+          <span class="task-priority priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span>
+          <span class="project-task-copy">
+            <strong>${escapeHtml(task.title)}</strong>
+            <small>${escapeHtml(task.id)} · ${escapeHtml(task.state)}${task.acceptanceCriteria.length ? ` · ${task.acceptanceCriteria.length} criteria` : ''}${task.attachments.length ? ` · ${task.attachments.length} image${task.attachments.length === 1 ? '' : 's'}` : ''}</small>
+            <small>${escapeHtml(prompt)}</small>
+            ${node.issue ? `<em>${icon('alert', 10)} ${escapeHtml(node.issue)}</em>` : ''}
+          </span>
+          <span class="project-task-actions">
+            ${node.issue ? '' : `<button class="button small ghost" data-action="add-project-subtask" data-task-id="${escapeHtml(task.id)}" aria-label="Add a subtask to ${escapeHtml(task.title)}">Add subtask</button>`}
+            ${canOfferProjectTask(node) ? `<button class="button small ghost" data-action="offer-project-task" data-task-id="${escapeHtml(task.id)}" aria-label="Send ${escapeHtml(task.title)} to Codex">Send to Codex</button>` : ''}
+          </span>
+        </article>`);
+    if (!node.children.length) {
+      chunks.push('</li>');
+      continue;
+    }
+    chunks.push('<ol>');
+    stack.push({ node, closing: true });
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      const child = node.children[index];
+      if (child) stack.push({ node: child, closing: false });
+    }
+  }
+  return chunks.join('');
+}
+
+function formatBytes(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function renderMetric(iconName: string, value: string, label: string, status = ''): string {
@@ -1156,23 +1271,120 @@ async function initializeProject(workspace: Workspace): Promise<void> {
 async function submitProjectTask(): Promise<void> {
   const workspace = currentWorkspace();
   const form = document.querySelector<HTMLFormElement>('#project-task-form');
-  if (!workspace || !form || !form.reportValidity()) return;
+  if (!workspace || !form || !form.reportValidity() || ui.projectLoading.has(workspace.id)) return;
   const data = new FormData(form);
+  const previousTaskIds = new Set(ui.projectSystems.get(workspace.id)?.tasks.map((task) => task.id) ?? []);
+  const submittedDraft: ProjectTaskComposerDraft = {
+    title: String(data.get('title') ?? ''),
+    objective: String(data.get('objective') ?? ''),
+    priority: String(data.get('priority') ?? 'P2') as ProjectTaskPriority,
+    parentId: String(data.get('parentId') ?? ''),
+    acceptanceCriteria: String(data.get('acceptanceCriteria') ?? ''),
+  };
+  const submittedImages = [...(ui.projectTaskImages.get(workspace.id) ?? [])];
   ui.projectLoading.add(workspace.id);
-  renderAll({ preserveFocus: true });
+  form.setAttribute('aria-busy', 'true');
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Adding…';
+  }
+  let succeeded = false;
+  let createdId = 'Task';
   try {
     ui.projectSystems.set(workspace.id, await api.project.addTask(workspace.id, {
-      title: String(data.get('title') ?? ''),
-      objective: String(data.get('objective') ?? ''),
+      title: submittedDraft.title,
+      objective: submittedDraft.objective,
+      priority: submittedDraft.priority,
+      parentId: submittedDraft.parentId || null,
+      acceptanceCriteria: submittedDraft.acceptanceCriteria.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+      images: submittedImages.map(({ name, mediaType, bytes }) => ({ name, mediaType, bytes })),
     }));
-    renderAll({ preserveFocus: true });
-    toast('Task added to TASKS.md.');
+    const created = ui.projectSystems.get(workspace.id)?.tasks.find((task) => !previousTaskIds.has(task.id));
+    createdId = created?.id ?? createdId;
+    const currentDraft = ui.projectTaskDrafts.get(workspace.id);
+    if (!currentDraft || projectTaskDraftMatches(currentDraft, submittedDraft)) {
+      ui.projectTaskDrafts.delete(workspace.id);
+    }
+    const remainingImages = removeSubmittedProjectTaskImages(
+      ui.projectTaskImages.get(workspace.id) ?? [],
+      submittedImages,
+    );
+    if (remainingImages.length) ui.projectTaskImages.set(workspace.id, remainingImages);
+    else ui.projectTaskImages.delete(workspace.id);
+    succeeded = true;
   } catch (error) {
     toast(errorMessage(error), 'error');
   } finally {
     ui.projectLoading.delete(workspace.id);
     renderAll({ preserveFocus: true });
+    if (succeeded) {
+      toast(`${createdId} added to TASKS.md.`);
+      window.setTimeout(() => document.querySelector<HTMLInputElement>('#project-task-title')?.focus(), 0);
+    }
   }
+}
+
+function filePreviewUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Image preview failed.')));
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('Image preview failed.')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addProjectTaskImages(files: File[]): Promise<void> {
+  const workspace = currentWorkspace();
+  if (!workspace || !files.length) return;
+  const existing = ui.projectTaskImages.get(workspace.id) ?? [];
+  if (existing.length + files.length > 4) {
+    toast('Attach no more than 4 task images.', 'error');
+    return;
+  }
+  const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
+  const accepted: PendingProjectTaskImage[] = [];
+  try {
+    for (const file of files) {
+      if (!allowed.has(file.type)) throw new Error('Task images must be PNG, JPEG, or WebP files.');
+      if (!file.size) throw new Error('The pasted image is empty.');
+      if (file.size > 5 * 1024 * 1024) throw new Error('Each task image must be 5 MB or smaller.');
+      accepted.push({
+        name: file.name || `Pasted image ${existing.length + accepted.length + 1}`,
+        mediaType: file.type,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        previewUrl: await filePreviewUrl(file),
+      });
+    }
+    const latest = ui.projectTaskImages.get(workspace.id) ?? [];
+    const combined = mergeProjectTaskImages(latest, accepted);
+    ui.projectTaskImages.set(workspace.id, combined);
+    if (currentWorkspace()?.id === workspace.id) {
+      const previews = document.querySelector<HTMLElement>('#task-image-previews');
+      if (previews) previews.innerHTML = renderPendingProjectTaskImages(combined);
+    }
+    toast(`${accepted.length} image${accepted.length === 1 ? '' : 's'} attached.`);
+  } catch (error) {
+    toast(errorMessage(error), 'error');
+  }
+}
+
+function removeProjectTaskImage(workspace: Workspace, index: number): void {
+  const images = ui.projectTaskImages.get(workspace.id) ?? [];
+  if (!Number.isInteger(index) || index < 0 || index >= images.length) return;
+  images.splice(index, 1);
+  if (images.length) ui.projectTaskImages.set(workspace.id, images);
+  else ui.projectTaskImages.delete(workspace.id);
+  const previews = document.querySelector<HTMLElement>('#task-image-previews');
+  if (previews) previews.innerHTML = renderPendingProjectTaskImages(images);
+}
+
+function chooseProjectSubtask(taskId: string): void {
+  const workspace = currentWorkspace();
+  if (workspace) projectTaskComposerDraft(workspace.id).parentId = taskId;
+  const parent = document.querySelector<HTMLSelectElement>('#project-task-form select[name="parentId"]');
+  if (parent) parent.value = taskId;
+  document.querySelector<HTMLInputElement>('#project-task-title')?.focus();
 }
 
 async function saveCodexSetting(workspace: Workspace, setting: 'model' | 'effort', value: string): Promise<void> {
@@ -1193,15 +1405,30 @@ async function saveCodexSetting(workspace: Workspace, setting: 'model' | 'effort
 }
 
 async function offerProjectTask(workspace: Workspace, taskId: string): Promise<void> {
-  const task = ui.projectSystems.get(workspace.id)?.tasks.find((candidate) => candidate.id === taskId);
-  if (!task) return;
+  const project = ui.projectSystems.get(workspace.id);
+  const task = findOfferableProjectTask(project?.tasks ?? [], taskId);
+  if (!task) {
+    toast('Resolve the task ID or parent-structure warning before sending this task.', 'error');
+    return;
+  }
   ui.activeTab = 'codex';
   renderAll();
   await Promise.all([ensureCodexMetadata(workspace), ensureThreads(workspace)]);
   if (!ui.activeThread.get(workspace.id)) await startNewThread(workspace);
   const threadId = ui.activeThread.get(workspace.id);
   if (!threadId) return;
-  ui.composerText.set(threadId, `Work on ${task.id} — ${task.title}. ${task.objective}`.trim());
+  const parent = task.parentId ? project?.tasks.find((candidate) => candidate.id === task.parentId) : null;
+  const children = project?.tasks.filter((candidate) => candidate.parentId === task.id) ?? [];
+  const details = [
+    `Work on ${task.id} — ${task.title}.`,
+    `Priority: ${task.priority}.`,
+    parent ? `Parent: ${parent.id} — ${parent.title}.` : '',
+    task.objective,
+    task.acceptanceCriteria.length ? `Acceptance criteria:\n${task.acceptanceCriteria.map((criterion) => `- ${criterion}`).join('\n')}` : '',
+    task.attachments.length ? `Reference images:\n${task.attachments.map((attachment) => `- ${attachment.path}`).join('\n')}` : '',
+    children.length ? `Direct subtasks:\n${children.map((child) => `- ${child.id} — ${child.title}`).join('\n')}` : '',
+  ].filter(Boolean);
+  ui.composerText.set(threadId, details.join('\n\n'));
   renderAll({ preserveFocus: true });
   window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('#codex-composer')?.focus(), 0);
 }
@@ -1549,6 +1776,20 @@ overlayRoot.addEventListener('click', (event) => {
 
 document.addEventListener('input', (event) => {
   const target = event.target;
+  if (
+    (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)
+    && target.form?.id === 'project-task-form'
+  ) {
+    const workspace = currentWorkspace();
+    if (workspace) {
+      const draft = projectTaskComposerDraft(workspace.id);
+      if (target.name === 'title') draft.title = target.value;
+      else if (target.name === 'priority' && /^(?:P0|P1|P2|P3)$/.test(target.value)) draft.priority = target.value as ProjectTaskPriority;
+      else if (target.name === 'parentId') draft.parentId = target.value;
+      else if (target.name === 'objective') draft.objective = target.value;
+      else if (target.name === 'acceptanceCriteria') draft.acceptanceCriteria = target.value;
+    }
+  }
   if (target instanceof HTMLTextAreaElement && target.id === 'codex-composer') {
     const workspace = currentWorkspace();
     const threadId = workspace ? ui.activeThread.get(workspace.id) : null;
@@ -1567,12 +1808,44 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('change', (event) => {
   const target = event.target;
+  if (target instanceof HTMLInputElement && target.id === 'project-task-images') {
+    void addProjectTaskImages(Array.from(target.files ?? []));
+    target.value = '';
+    return;
+  }
   if (!(target instanceof HTMLSelectElement)) return;
   const setting = target.dataset.codexSetting;
   const workspace = currentWorkspace();
   if (workspace && (setting === 'model' || setting === 'effort')) {
     void saveCodexSetting(workspace, setting, target.value);
   }
+});
+
+document.addEventListener('paste', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.closest('[data-task-image-dropzone]')) return;
+  const files = Array.from(event.clipboardData?.items ?? [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  if (!files.length) {
+    toast('The clipboard does not contain a supported image.', 'error');
+    return;
+  }
+  event.preventDefault();
+  void addProjectTaskImages(files);
+});
+
+appElement.addEventListener('dragover', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLElement && target.closest('[data-task-image-dropzone]')) event.preventDefault();
+});
+
+appElement.addEventListener('drop', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.closest('[data-task-image-dropzone]')) return;
+  event.preventDefault();
+  void addProjectTaskImages(Array.from(event.dataTransfer?.files ?? []));
 });
 
 document.addEventListener('submit', (event) => {
@@ -1589,6 +1862,11 @@ document.addEventListener('submit', (event) => {
 
 document.addEventListener('keydown', (event) => {
   const ctrlOrMeta = event.ctrlKey || event.metaKey;
+  if ((event.key === 'Enter' || event.key === ' ') && document.activeElement instanceof HTMLElement && document.activeElement.dataset.taskImageDropzone === 'true') {
+    event.preventDefault();
+    document.querySelector<HTMLInputElement>('#project-task-images')?.click();
+    return;
+  }
   if (ctrlOrMeta && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     ui.paletteOpen = true;
@@ -1696,6 +1974,15 @@ async function executeAction(actionName: string, element: HTMLElement): Promise<
       break;
     case 'offer-project-task':
       if (workspace && element.dataset.taskId) await offerProjectTask(workspace, element.dataset.taskId);
+      break;
+    case 'add-project-subtask':
+      if (element.dataset.taskId) chooseProjectSubtask(element.dataset.taskId);
+      break;
+    case 'choose-task-images':
+      document.querySelector<HTMLInputElement>('#project-task-images')?.click();
+      break;
+    case 'remove-task-image':
+      if (workspace) removeProjectTaskImage(workspace, Number(element.dataset.imageIndex));
       break;
     case 'refresh-codex-metadata':
       if (workspace) await ensureCodexMetadata(workspace, true);
@@ -2046,6 +2333,8 @@ async function deleteWorkspace(workspaceId: string): Promise<void> {
     for (const thread of ui.threadLists.get(workspaceId) ?? []) {
       ui.codexPreferences.deleteThread(thread.id);
     }
+    ui.projectTaskDrafts.delete(workspaceId);
+    ui.projectTaskImages.delete(workspaceId);
     ui.threadLists.delete(workspaceId);
     ui.activeThread.delete(workspaceId);
     ui.codexPreferences.deleteWorkspace(workspaceId);

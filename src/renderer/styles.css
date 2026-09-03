@@ -815,14 +815,29 @@ button,
   gap: 8px;
 }
 
-.task-compose label {
+.task-compose label,
+.task-compose-heading label {
   color: var(--text-soft);
   font-size: 10px;
   font-weight: 650;
 }
 
+.task-compose-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-compose-heading span {
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
 .task-compose input,
-.task-compose textarea {
+.task-compose textarea,
+.task-compose select {
   width: 100%;
   border: 1px solid var(--border-bright);
   border-radius: 8px;
@@ -839,7 +854,85 @@ button,
 }
 
 .task-compose input:focus,
-.task-compose textarea:focus { border-color: rgba(125, 224, 195, 0.5); }
+.task-compose textarea:focus,
+.task-compose select:focus { border-color: rgba(125, 224, 195, 0.5); }
+
+.task-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  gap: 8px;
+}
+
+.task-field-grid label,
+.task-text-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-field-grid label > span,
+.task-text-field > span { color: var(--muted-2); font-size: 9px; }
+
+.task-image-dropzone {
+  min-height: 74px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px dashed var(--border-bright);
+  border-radius: 9px;
+  padding: 10px;
+  outline: 0;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.task-image-dropzone:focus,
+.task-image-dropzone:hover {
+  border-color: rgba(125, 224, 195, 0.5);
+  background: var(--accent-dim);
+}
+
+.task-image-dropzone-icon {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.task-image-dropzone strong,
+.task-image-dropzone small { display: block; }
+.task-image-dropzone strong { color: var(--text-soft); font-size: 9px; }
+.task-image-dropzone small { margin-top: 3px; color: var(--muted-2); font-size: 8px; line-height: 1.4; }
+
+.task-image-previews {
+  display: grid;
+  gap: 6px;
+}
+
+.task-image-preview {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 6px;
+  color: var(--text-soft);
+  font-size: 9px;
+}
+
+.task-image-preview img {
+  width: 36px;
+  height: 30px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.task-image-preview small { display: block; margin-top: 2px; color: var(--muted-2); font-size: 8px; }
 
 .task-compose .button { align-self: flex-start; }
 
@@ -850,9 +943,23 @@ button,
   overflow: hidden;
 }
 
+.project-task-tree,
+.project-task-tree ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-task-tree > .empty-inline { list-style: none; }
+
+.project-task-node > ol {
+  margin-left: 19px;
+  border-left: 1px solid rgba(125, 224, 195, 0.18);
+}
+
 .project-task-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 52px;
@@ -862,7 +969,8 @@ button,
 
 .project-task-row:last-child { border-bottom: 0; }
 
-.task-state {
+.task-state,
+.task-priority {
   border-radius: 999px;
   padding: 4px 6px;
   color: var(--muted);
@@ -871,6 +979,11 @@ button,
   text-align: center;
   text-transform: uppercase;
 }
+
+.task-priority.priority-p0 { color: var(--red); background: rgba(241, 139, 147, 0.08); }
+.task-priority.priority-p1 { color: var(--amber); background: rgba(239, 194, 111, 0.08); }
+.task-priority.priority-p2 { color: var(--accent); background: var(--accent-dim); }
+.task-priority.priority-p3 { color: var(--muted); }
 
 .task-state.state-in-progress { color: var(--accent); background: var(--accent-dim); }
 .task-state.state-blocked { color: var(--red); background: rgba(241, 139, 147, 0.07); }
@@ -890,6 +1003,13 @@ button,
 
 .project-task-copy strong { color: var(--text-soft); font-size: 10px; }
 .project-task-copy small { margin-top: 4px; color: var(--muted-2); font-size: 9px; }
+.project-task-copy em { display: flex; align-items: center; gap: 4px; margin-top: 5px; color: var(--red); font-size: 8px; font-style: normal; }
+
+.project-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
 
 .panel-card {
   overflow: hidden;

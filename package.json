@@ -55,5 +55,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "jpeg-js": "0.4.4",
+    "webp-wasm": "1.0.6"
   }
 }
