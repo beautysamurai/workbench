@@ -306,10 +306,14 @@ function validPngHeader(bytes: Uint8Array, dataStart: number): boolean {
 interface PngScanlinePass {
   rowBytes: number;
   rowCount: number;
+  width: number;
 }
 
 interface StructuredPngImageData {
+  bitDepth: number;
+  colorType: number;
   compressed: Uint8Array;
+  paletteEntries: number;
   passes: PngScanlinePass[];
 }
 
@@ -343,7 +347,7 @@ function pngScanlinePasses(
     const passBytes = (rowBytes + 1) * rowCount;
     if (!Number.isSafeInteger(passBytes) || inflatedBytes > MAX_PNG_INFLATED_BYTES - passBytes) return null;
     inflatedBytes += passBytes;
-    passes.push({ rowBytes, rowCount });
+    passes.push({ rowBytes, rowCount, width: passWidth });
   }
   return passes.length ? passes : null;
 }
@@ -357,6 +361,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
   let height = 0;
   let interlace = 0;
   let hasPalette = false;
+  let paletteEntries = 0;
   let hasImageData = false;
   let imageDataEnded = false;
   let imageDataBytes = 0;
@@ -387,6 +392,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
         || length === 0 || length % 3 !== 0 || entries > 256
         || (colorType === 3 && entries > (2 ** bitDepth))) return null;
       hasPalette = true;
+      paletteEntries = entries;
     } else if (type === 'IDAT') {
       if (imageDataEnded) return null;
       hasImageData = true;
@@ -406,7 +412,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
         compressed.set(chunk, compressedOffset);
         compressedOffset += chunk.length;
       }
-      return { compressed, passes };
+      return { bitDepth, colorType, compressed, paletteEntries, passes };
     } else {
       if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return null;
       if (hasImageData) imageDataEnded = true;
@@ -527,7 +533,10 @@ interface CompressedImageDecodeRequest {
 
 interface PngImageDecodeRequest {
   kind: 'png';
+  bitDepth: number;
+  colorType: number;
   compressed: Uint8Array;
+  paletteEntries: number;
   passes: PngScanlinePass[];
 }
 
@@ -564,7 +573,10 @@ async function runProjectImageDecoderNow(
         workerData: request.kind === 'png'
           ? {
             kind: request.kind,
+            bitDepth: request.bitDepth,
+            colorType: request.colorType,
             compressed: Uint8Array.from(request.compressed),
+            paletteEntries: request.paletteEntries,
             passes: request.passes.map((pass) => ({ ...pass })),
           }
           : {
@@ -631,7 +643,10 @@ async function runProjectImageDecoder(
 async function hasValidPngImageData(image: StructuredPngImageData): Promise<boolean> {
   return (await runProjectImageDecoder({
     kind: 'png',
+    bitDepth: image.bitDepth,
+    colorType: image.colorType,
     compressed: image.compressed,
+    paletteEntries: image.paletteEntries,
     passes: image.passes,
   }))?.valid === true;
 }

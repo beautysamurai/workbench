@@ -1741,3 +1741,39 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The first final `npm run dist:dir` attempt completed compilation but failed while resolving `github.com` with `EAI_AGAIN`; the required network-enabled retry completed packaging. The rebuilt packaged-ASAR validator reported every flag true, including `workflowSymlinkSafe` and `cleanupRaceSafe`.
 - `npm start -- --user-data-dir=/tmp/workbench-p0-review-correction-final-profile --enable-logging=stderr` remained stable for five seconds until intentional SIGINT; `pgrep -a -x electron` then produced no output (expected no-match exit `1`). No source or test edits followed these final checks.
 - Next action: commit and push this frozen correction, resolve the two findings with exact evidence, and require green CI plus clean automated review on the new head. Blocker: none established.
+
+### 2026-09-03 20:27 JST — P0-002 indexed-PNG palette review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `9b78c21` passed both workflow events: Linux verification completed in 24 and 22 seconds, and Windows package jobs completed in 2 minutes 3 seconds and 1 minute 34 seconds. Its workflow-symlink and cleanup findings were resolved, and the merge state was clean.
+- Automated Codex review completed on that exact head and opened one P2 finding: the PNG worker validated inflation length and filter-byte ranges but did not reconstruct indexed scanlines, so a pixel could reference an entry beyond the declared `PLTE`.
+- The finding is accepted. `node /tmp/workbench-p0-indexed-png-repro.cjs` built a valid-CRC, valid-zlib, one-pixel indexed PNG with one palette entry. Before correction, both sample `0` and out-of-range sample `1` were accepted, `safe` was `false`, and the command exited `1`.
+
+**Scoped correction**
+
+- The bounded worker request now includes PNG color type, bit depth, palette-entry count, and each non-empty scanline pass width in addition to row bytes/count and compressed IDAT bytes. The worker independently validates that metadata and its computed row sizes.
+- Indexed scanlines are reconstructed with the PNG None, Sub, Up, Average, and Paeth filters, resetting the prior row at each Adam7 pass. Packed 1-, 2-, and 4-bit and direct 8-bit palette samples are then checked against the actual palette-entry count before acceptance.
+- Non-indexed images retain the prior lightweight filter-byte validation, avoiding a new full-pixel loop for the existing 40-million-pixel limit. Inflation, queue, worker memory, output, and timeout bounds remain unchanged.
+- The portable regression accepts a valid one-entry indexed image, rejects the exact index-1 reproducer, rejects an out-of-range packed 1-bit Adam7 sample, accepts a Sub-filtered row whose encoded byte is out of palette range but reconstructs in range, and rejects a Sub-filtered row that only becomes out of range after reconstruction.
+- Files changed: `src/main/project-system.ts`, `src/main/project-image-decoder-worker.ts`, `tests/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/project-system.test.js` | All 13 portable project-system cases passed, including five indexed-PNG assertions and prior image validation/queue coverage; exit `0`. |
+| passed | `node /tmp/workbench-p0-indexed-png-repro.cjs` | Valid sample `0` remained accepted, invalid sample `1` was rejected, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including 23 WSL project-system cases, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; a valid indexed PNG was accepted, the out-of-range palette sample was rejected, and all prior PNG/JPEG/WebP and task-filesystem flags remained true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-indexed-png-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; `pgrep -a -x electron` returned no process (expected no-match exit `1`). Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push the indexed-PNG correction, reply to and resolve the accepted finding, then require fresh CI and exact-head automated review.
+- Blocker: none established.

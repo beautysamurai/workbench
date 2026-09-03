@@ -71,6 +71,28 @@ function compressibleRgbaPng(width: number, height: number): Uint8Array {
   ]));
 }
 
+function indexedPng(
+  width: number,
+  bitDepth: 1 | 2 | 4 | 8,
+  paletteEntries: number,
+  filteredScanlines: Uint8Array,
+  interlace = 0,
+): Uint8Array {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(1, 4);
+  header[8] = bitDepth;
+  header[9] = 3;
+  header[12] = interlace;
+  return Uint8Array.from(Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('PLTE', Buffer.alloc(paletteEntries * 3)),
+    pngChunk('IDAT', deflateSync(filteredScanlines)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]));
+}
+
 function splitImageDataPng(): Uint8Array {
   const png = Buffer.from(tinyPng());
   const typeOffset = png.indexOf('IDAT');
@@ -467,6 +489,27 @@ test('rejects PNGs without image data or with corrupted chunk data', async () =>
   );
   await assert.rejects(
     validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(0, 0))) }),
+    /PNG, JPEG, or WebP/,
+  );
+});
+
+test('reconstructs indexed PNG scanlines and rejects missing palette entries', async () => {
+  assert.equal((await validateProjectTaskImage({
+    bytes: indexedPng(1, 8, 1, Uint8Array.of(0, 0)),
+  })).mediaType, 'image/png');
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: indexedPng(1, 8, 1, Uint8Array.of(0, 1)) }),
+    /PNG, JPEG, or WebP/,
+  );
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: indexedPng(1, 1, 1, Uint8Array.of(0, 0x80), 1) }),
+    /PNG, JPEG, or WebP/,
+  );
+  assert.equal((await validateProjectTaskImage({
+    bytes: indexedPng(2, 8, 2, Uint8Array.of(1, 1, 0xff)),
+  })).mediaType, 'image/png');
+  await assert.rejects(
+    validateProjectTaskImage({ bytes: indexedPng(2, 8, 2, Uint8Array.of(1, 1, 1)) }),
     /PNG, JPEG, or WebP/,
   );
 });
