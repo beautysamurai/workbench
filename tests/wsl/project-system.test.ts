@@ -406,6 +406,63 @@ test('removes newly written images when the task append fails', async () => {
   });
 });
 
+test('preserves a concurrently replaced image when task failure cleanup runs', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-image-cleanup-race-tools-'));
+    const marker = path.join(toolsDirectory, 'changed');
+    const imagePath = path.join(directory, '.workbench/task-images/WB-001-01.png');
+    const sha256sumWrapper = path.join(toolsDirectory, 'sha256sum');
+    const mvWrapper = path.join(toolsDirectory, 'mv');
+    const replacement = Buffer.from('concurrent replacement\n', 'utf8');
+    await initializeProjectSystem(workspace);
+    fs.writeFileSync(sha256sumWrapper, `#!/bin/bash
+set -u
+target="\${@: -1}"
+if [[ "$target" == /proc/*/fd/4 ]]; then
+  printf 'forced task digest failure' >&2
+  exit 1
+fi
+exec /usr/bin/sha256sum "$@"
+`, { mode: 0o755 });
+    fs.writeFileSync(mvWrapper, `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+claim_path="\${@: -1}"
+if [[ "$source_path" == */WB-001-01.png ]] && [[ "$claim_path" == */.WB-*.workbench-cleanup.* ]] && [ ! -e "$WORKBENCH_TEST_IMAGE_CLEANUP_MARKER" ]; then
+  : > "$WORKBENCH_TEST_IMAGE_CLEANUP_MARKER"
+  rm -f -- "$source_path"
+  printf 'concurrent replacement\\n' > "$source_path"
+  chmod 0600 "$source_path"
+fi
+exec /usr/bin/mv "$@"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_IMAGE_CLEANUP_MARKER,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_IMAGE_CLEANUP_MARKER = marker;
+    try {
+      await assert.rejects(addProjectTask(workspace, {
+        title: 'Cleanup race',
+        priority: 'P1',
+        images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+      }), /could not be revalidated/);
+      assert.equal(fs.existsSync(marker), true, 'The test must replace the installed image at the cleanup claim.');
+      assert.deepEqual(fs.readFileSync(imagePath), replacement);
+      assert.equal(fs.statSync(imagePath).mode & 0o777, 0o600);
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, 'TASKS.md'), 'utf8'), /Cleanup race/);
+      assert.deepEqual(fs.readdirSync(path.dirname(imagePath)).filter((name) => name.includes('workbench-cleanup')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_IMAGE_CLEANUP_MARKER;
+      else process.env.WORKBENCH_TEST_IMAGE_CLEANUP_MARKER = oldEnvironment.marker;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('rejects invalid parents and unsafe task-image directory boundaries', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     await initializeProjectSystem(workspace);
@@ -689,7 +746,30 @@ printf '%s\\n' "$resolved"
   }
 });
 
-test('refuses to follow an unsafe project-file symlink', async () => {
+test('classifies project-file symlinks as unsafe before reserving or staging', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    await initializeProjectSystem(workspace);
+    const linkedDirectory = path.join(directory, 'workflow');
+    const linkedTasks = path.join(linkedDirectory, 'tasks.md');
+    const tasksPath = path.join(directory, 'TASKS.md');
+    fs.mkdirSync(linkedDirectory);
+    fs.renameSync(tasksPath, linkedTasks);
+    fs.symlinkSync('workflow/tasks.md', tasksPath);
+    const inspected = await inspectProjectSystem(workspace);
+    assert.equal(inspected.files.find((file) => file.name === 'TASKS.md')?.safe, false);
+    assert.equal(inspected.ready, false);
+    await assert.rejects(addProjectTask(workspace, {
+      title: 'Rejected symlink task',
+      priority: 'P1',
+      images: [{ name: 'clipboard.png', mediaType: 'image/png', bytes: tinyPng() }],
+    }), /unsafe project-file symlink/);
+    assert.doesNotMatch(fs.readFileSync(linkedTasks, 'utf8'), /Rejected symlink task/);
+    assert.equal(fs.existsSync(path.join(directory, '.workbench/task-sequence')), false);
+    assert.equal(fs.existsSync(path.join(directory, '.workbench/task-images')), false);
+  });
+});
+
+test('refuses to follow an escaping project-file symlink', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-outside-'));
     const outsideTasks = path.join(outside, 'TASKS.md');

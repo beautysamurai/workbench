@@ -227,6 +227,13 @@ interface ValidatedProjectImage {
   extension: 'png' | 'jpg' | 'webp';
 }
 
+interface WrittenProjectTaskImage {
+  attachment: ProjectTaskAttachment;
+  digest: string;
+  identity: string;
+  mode: string;
+}
+
 function startsWithBytes(bytes: Uint8Array, signature: number[], offset = 0): boolean {
   return signature.every((value, index) => bytes[offset + index] === value);
 }
@@ -928,7 +935,8 @@ function projectTasksFileHandleStatements(mode: 'read' | 'update'): string[] {
     mode === 'read'
       ? 'if [ ! -e "$target" ] && [ ! -L "$target" ]; then exit 0; fi'
       : 'if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf "TASKS.md does not exist" >&2; exit 3; fi',
-    'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); else target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }; fi',
+    'if [ -L "$target" ]; then printf "Refusing unsafe TASKS.md symlink" >&2; exit 4; fi',
+    'target_real=$(realpath -- "$target") || { printf "TASKS.md cannot be resolved" >&2; exit 3; }',
     'case "$target_real" in "$root_real"/*) ;; *) printf "TASKS.md resolves outside the workspace" >&2; exit 4 ;; esac',
     'if [ ! -f "$target" ]; then printf "TASKS.md is not a regular file" >&2; exit 4; fi',
     'target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md is unsafe" >&2; exit 4; }',
@@ -944,7 +952,7 @@ function projectTasksFileHandleStatements(mode: 'read' | 'update'): string[] {
 async function inspectFiles(workspace: Workspace): Promise<ProjectSystemFile[]> {
   const statements = PROJECT_FILES.flatMap((name) => [
     `target="$root_fd/${name}"`,
-    `if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf '${name}\\tmissing\\n'; else target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) if [ -f "$target_real" ] && [ "$(stat -c %h -- "$target_real" 2>/dev/null)" = 1 ]; then printf '${name}\\tpresent\\n'; else printf '${name}\\tunsafe\\n'; fi ;; *) printf '${name}\\tunsafe\\n' ;; esac; fi`,
+    `if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf '${name}\\tmissing\\n'; elif [ -L "$target" ]; then printf '${name}\\tunsafe\\n'; else target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) if [ -f "$target_real" ] && [ "$(stat -c %h -- "$target_real" 2>/dev/null)" = 1 ]; then printf '${name}\\tpresent\\n'; else printf '${name}\\tunsafe\\n'; fi ;; *) printf '${name}\\tunsafe\\n' ;; esac; fi`,
   ]);
   const output = await runProjectScript(workspace, statements);
   const states = new Map(output.split(/\r?\n/).filter(Boolean).map((line) => line.split('\t', 2) as [string, string]));
@@ -1006,10 +1014,10 @@ export async function initializeProjectSystem(workspace: Workspace): Promise<Pro
   for (const name of PROJECT_FILES) {
     statements.push(
       `target="$root_fd/${name}"`,
-      'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) ;; *) printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4 ;; esac; fi',
+      'if [ -L "$target" ]; then printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4; fi',
       'if [ -e "$target" ] && [ ! -f "$target" ]; then printf "Project workflow path is not a regular file: %s" "$target" >&2; exit 4; fi',
       `if [ ! -e "$target" ] && [ ! -L "$target" ]; then (umask 022; set -C; printf %s ${shellQuote(PROJECT_TEMPLATES[name])} > "$target") 2>/dev/null || true; fi`,
-      'if [ -L "$target" ]; then target_real=$(realpath -- "$target" 2>/dev/null || true); case "$target_real" in "$root_real"/*) ;; *) printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4 ;; esac; fi',
+      'if [ -L "$target" ]; then printf "Refusing unsafe project-file symlink: %s" "$target" >&2; exit 4; fi',
       'if [ ! -f "$target" ]; then printf "Project workflow path is not a regular file: %s" "$target" >&2; exit 4; fi',
       'target_real=$(realpath -- "$target") || { printf "Project workflow path cannot be resolved: %s" "$target" >&2; exit 4; }',
       'case "$target_real" in "$root_real"/*) ;; *) printf "Project workflow path resolves outside the workspace: %s" "$target" >&2; exit 4 ;; esac',
@@ -1113,9 +1121,9 @@ async function writeProjectTaskImage(
   workspace: Workspace,
   attachment: ProjectTaskAttachment,
   bytes: Uint8Array,
-): Promise<void> {
+): Promise<WrittenProjectTaskImage> {
   const filename = taskImageFilename(attachment);
-  await runProjectScript(workspace, [
+  const writtenIdentity = (await runProjectScript(workspace, [
     ...projectImageDirectoryStatements(),
     `target="$image_dir_fd/${filename}"`,
     'if [ -e "$target" ] || [ -L "$target" ]; then printf "Task image already exists" >&2; exit 7; fi',
@@ -1137,20 +1145,44 @@ async function writeProjectTaskImage(
     'if [ -L "$target" ] || [ ! -f "$target" ] || [ "$target_identity" != "$temporary_identity" ]; then rm -f -- "$target"; printf "Task image installation changed during validation" >&2; exit 8; fi',
     'rm -f -- "$temporary" || { rm -f -- "$target"; printf "Task image temporary file could not be removed" >&2; exit 8; }',
     'if [ "$(stat -Lc "%d:%i" -- "$temporary_fd" 2>/dev/null)" != "$temporary_identity" ] || [ "$(stat -Lc %h -- "$temporary_fd" 2>/dev/null)" != 1 ] || [ "$(stat -Lc "%d:%i" -- "$target" 2>/dev/null)" != "$temporary_identity" ]; then rm -f -- "$target"; printf "Task image installation changed during validation" >&2; exit 8; fi',
+    'temporary_mode=$(stat -Lc %a -- "$temporary_fd" 2>/dev/null) || { printf "Task image permissions could not be read" >&2; exit 8; }',
     'exec 3>&-',
     'trap - EXIT',
-  ], bytes);
+    'printf "%s\\t%s\\n" "$temporary_identity" "$temporary_mode"',
+  ], bytes)).trim();
+  const identity = /^(\d+:\d+)\t([0-7]{3,4})$/.exec(writtenIdentity);
+  if (!identity) throw new Error('Task image identity is invalid.');
+  return {
+    attachment,
+    digest: createHash('sha256').update(bytes).digest('hex'),
+    identity: identity[1] ?? '',
+    mode: identity[2] ?? '',
+  };
 }
 
 async function cleanupProjectTaskImages(
   workspace: Workspace,
-  attachments: ProjectTaskAttachment[],
+  images: WrittenProjectTaskImage[],
 ): Promise<void> {
-  if (!attachments.length) return;
-  const filenames = attachments.map(taskImageFilename);
+  if (!images.length) return;
   await runProjectScript(workspace, [
     ...projectImageDirectoryStatements(),
-    ...filenames.map((filename) => `rm -f -- "$image_dir_fd/${filename}"`),
+    'restore_task_image_cleanup_claim() { if [ ! -e "$cleanup_target" ] && [ ! -L "$cleanup_target" ]; then mv -nT -- "$cleanup_claim" "$cleanup_target" 2>/dev/null || true; fi; if [ -e "$cleanup_claim" ] || [ -L "$cleanup_claim" ]; then printf "Task image changed during cleanup" >&2; return 1; fi; }',
+    ...images.flatMap(({ attachment, digest, identity, mode }) => {
+      const filename = taskImageFilename(attachment);
+      return [
+        `cleanup_target="$image_dir_fd/${filename}"`,
+        `cleanup_claim="$image_dir_fd/.${filename}.workbench-cleanup.$$"`,
+        `expected_cleanup_identity=${shellQuote(identity)}`,
+        `expected_cleanup_digest=${shellQuote(digest)}`,
+        `expected_cleanup_mode=${shellQuote(mode)}`,
+        'if [ -e "$cleanup_claim" ] || [ -L "$cleanup_claim" ]; then printf "Task image cleanup path already exists" >&2; exit 8; fi',
+        'cleanup_eligible=0',
+        'if [ ! -L "$cleanup_target" ] && [ -f "$cleanup_target" ]; then cleanup_path_identity=$(stat -c "%d:%i" -- "$cleanup_target" 2>/dev/null || true); if [ "$cleanup_path_identity" = "$expected_cleanup_identity" ] && exec 3< "$cleanup_target" 2>/dev/null; then cleanup_fd="/proc/$$/fd/3"; cleanup_opened_identity=$(stat -Lc "%d:%i" -- "$cleanup_fd" 2>/dev/null || true); if [ ! -L "$cleanup_target" ] && [ -f "$cleanup_fd" ] && [ "$cleanup_opened_identity" = "$expected_cleanup_identity" ] && [ "$(stat -c "%d:%i" -- "$cleanup_target" 2>/dev/null)" = "$expected_cleanup_identity" ] && [ "$(stat -Lc %h -- "$cleanup_fd" 2>/dev/null)" = 1 ] && [ "$(stat -Lc %a -- "$cleanup_fd" 2>/dev/null)" = "$expected_cleanup_mode" ]; then cleanup_target_digest=$(sha256sum -- "$cleanup_fd" 2>/dev/null || true); cleanup_target_digest=${cleanup_target_digest%% *}; if [ "$cleanup_target_digest" = "$expected_cleanup_digest" ]; then cleanup_eligible=1; fi; fi; fi; fi',
+        'if [ "$cleanup_eligible" -eq 1 ]; then mv -nT -- "$cleanup_target" "$cleanup_claim" 2>/dev/null || true; if [ -e "$cleanup_claim" ] || [ -L "$cleanup_claim" ]; then cleanup_claim_identity=$(stat -c "%d:%i" -- "$cleanup_claim" 2>/dev/null || true); cleanup_claim_digest=$(sha256sum -- "$cleanup_fd" 2>/dev/null || true); cleanup_claim_digest=${cleanup_claim_digest%% *}; if [ ! -L "$cleanup_claim" ] && [ -f "$cleanup_fd" ] && [ "$cleanup_claim_identity" = "$expected_cleanup_identity" ] && [ "$(stat -Lc "%d:%i" -- "$cleanup_fd" 2>/dev/null)" = "$expected_cleanup_identity" ] && [ "$(stat -Lc %h -- "$cleanup_fd" 2>/dev/null)" = 1 ] && [ "$(stat -Lc %a -- "$cleanup_fd" 2>/dev/null)" = "$expected_cleanup_mode" ] && [ "$cleanup_claim_digest" = "$expected_cleanup_digest" ]; then rm -f -- "$cleanup_claim" || { printf "Task image cleanup failed" >&2; exit 8; }; else restore_task_image_cleanup_claim || exit 8; fi; fi; fi',
+        'exec 3<&- 2>/dev/null || true',
+      ];
+    }),
   ]);
 }
 
@@ -1271,13 +1303,12 @@ async function addProjectTaskNow(workspace: Workspace, draft: ProjectTaskDraft):
   const createdTask = parseProjectTasks(task)[0];
   if (!createdTask || createdTask.id !== taskId) throw new Error('Task details could not be formatted.');
   let committedTasks = [...existingTasks, createdTask];
-  const written: ProjectTaskAttachment[] = [];
+  const written: WrittenProjectTaskImage[] = [];
   try {
     for (const [index, image] of images.entries()) {
       const attachment = attachments[index];
       if (!attachment) continue;
-      await writeProjectTaskImage(workspace, attachment, image.bytes);
-      written.push(attachment);
+      written.push(await writeProjectTaskImage(workspace, attachment, image.bytes));
     }
     const committedBaseTasks = await commitProjectTask(workspace, taskId, task, parentId, existingTasksMarkdown);
     committedTasks = [...committedBaseTasks, createdTask];

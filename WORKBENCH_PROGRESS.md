@@ -1695,3 +1695,49 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - The frozen transaction also compares the source mode before and after claiming the inode; the compatible-edit regression changes both Markdown and mode, then proves the retry retains the note and final `0600` permissions. The final focused run passed all 21 WSL cases and both standalone race reproducers with `safe: true`.
 - On this exact source tree, `npm run check` passed strict types and all 14 full test files, `npm run dist:dir` completed, and the packaged-ASAR validator reported every flag true including `parentRaceSafe` and `temporaryRaceSafe`. `npm start -- --user-data-dir=/tmp/workbench-p0-atomic-task-exact-profile --enable-logging=stderr` remained stable for five seconds until intentional SIGINT, after which no Electron process remained.
 - No further source or test edits followed these checks. Next action is the delivery/re-review gate; blocker: none established.
+
+### 2026-09-03 19:58 JST — P0-002 workflow-symlink and image-cleanup review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `c1912a9` passed both workflow events: Linux verification completed in 27 and 21 seconds, and Windows package jobs completed in 1 minute 54 seconds and 1 minute 42 seconds. All 28 prior review threads were resolved with commit evidence.
+- Automated Codex review on that exact head opened two P2 findings. Inspection and initialization treated an in-workspace `TASKS.md` symlink as ready even though the atomic updater could not commit through it; failed task cleanup also removed a generated image path without proving it still named the inode Workbench wrote.
+- Both findings are accepted. Before correction, `node /tmp/workbench-p0-task-symlink-repro.cjs` reported `inspectedReady: true` and `inspectedSafe: true`, then failed the add after reserving an ID; the command exited `1`. `node /tmp/workbench-p0-image-cleanup-race-repro.cjs` replaced the written attachment with a concurrent `0600` file immediately before forcing Markdown failure; cleanup deleted that replacement, reported `safe: false`, and exited `1`.
+
+**Scoped correction**
+
+- Inspection, initialization, and direct task-file opening now consistently require `AGENTS.md`, `TASKS.md`, and `WORKBENCH_PROGRESS.md` to be direct regular files. Every workflow-file symlink is classified unsafe before task-sequence reservation or image staging, avoiding a UI-ready state that the atomic updater cannot honor.
+- Successful image installation returns its device/inode identity, observed post-installation mode, and a SHA-256 digest to the task transaction. Failure cleanup opens the generated target, validates its path and pinned handle against that identity, single-link count, recorded mode (`0644` on the regression filesystem), and digest, then atomically moves the entry to a private claim and revalidates the still-open descriptor before unlinking it.
+- If a replacement appears before cleanup, it fails those ownership checks and remains untouched. If replacement occurs at the claim boundary, the mismatched claim is moved back without clobbering a competing target; an unrecoverable collision is surfaced instead of deleting unknown data.
+- Focused regressions prove a same-workspace workflow symlink is unsafe before reservation/staging and inject an image replacement at the cleanup claim boundary, preserving its exact bytes and `0600` mode with no leftover claim. The standalone direct replacement and a second standalone claim-boundary reproducer both report safe outcomes.
+- Files changed: `src/main/project-system.ts`, `tests/wsl/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 23 WSL project-system cases passed, including both new regressions and every prior task/image/filesystem race; exit `0`. |
+| passed | three parallel repetitions of `node dist-test/tests/wsl/project-system.test.js` | Every repetition passed all 23 cases with zero failures; exits `0`. |
+| passed | `node /tmp/workbench-p0-task-symlink-repro.cjs` | Inspection reported the workflow symlink unsafe/not ready, add rejected before an ID or image was staged, `consistent` was `true`, and the command exited `0`. |
+| passed | `node /tmp/workbench-p0-image-cleanup-race-repro.cjs` and `node /tmp/workbench-p0-image-cleanup-claim-race-repro.cjs` | Direct pre-cleanup and exact claim-boundary replacements both remained byte-exact at mode `0600`; both reported `safe: true` and exited `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `workflowSymlinkSafe`, `cleanupRaceSafe`, `parentRaceSafe`, `temporaryRaceSafe`, and every prior validation flag were true; exit `0`. |
+| passed | `npm start -- --user-data-dir=/tmp/workbench-p0-review-correction-profile --enable-logging=stderr`, observed for five seconds, then Ctrl+C | The full app remained running until intentional SIGINT; the expected command exit was `1`, and `pgrep -a -x electron` then returned no process (no-match exit `1`). Existing DBus/GPU warnings were non-fatal. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push the reviewed correction, reply to and resolve both accepted findings, then require fresh CI and an automated re-review on the exact new head.
+- Blocker: none established.
+
+### 2026-09-03 20:02 JST — P0-002 frozen cleanup-identity verification
+
+- Final portability reflection replaced the cleanup's assumed Linux `0644` value with the exact post-installation mode returned alongside the written inode identity. Cleanup therefore compares the recorded mode on filesystems with different permission semantics while the Linux regressions still prove that a concurrent `0600` replacement is preserved.
+- On this exact source, the focused WSL run and all three standalone reproducers passed, followed by `npm run check:portable` (13 files) and `npm run check` (14 files). After production packaging removed disposable `dist-test`, three attempted direct repetitions correctly failed with `MODULE_NOT_FOUND`; rebuilding with `npm run build:tests` and repeating in parallel then passed all 23 cases three times.
+- The first final `npm run dist:dir` attempt completed compilation but failed while resolving `github.com` with `EAI_AGAIN`; the required network-enabled retry completed packaging. The rebuilt packaged-ASAR validator reported every flag true, including `workflowSymlinkSafe` and `cleanupRaceSafe`.
+- `npm start -- --user-data-dir=/tmp/workbench-p0-review-correction-final-profile --enable-logging=stderr` remained stable for five seconds until intentional SIGINT; `pgrep -a -x electron` then produced no output (expected no-match exit `1`). No source or test edits followed these final checks.
+- Next action: commit and push this frozen correction, resolve the two findings with exact evidence, and require green CI plus clean automated review on the new head. Blocker: none established.
