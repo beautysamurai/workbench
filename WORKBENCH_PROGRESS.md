@@ -2144,7 +2144,12 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 | passed | bounded packaged-app launch and cleanup | The isolated packaged app remained running until intentional termination; afterward exact process checks found neither `ai-workbench` nor `electron`. Existing DBus warnings were non-fatal. |
 | unavailable | physical Windows clipboard injection | The user's live clipboard was not overwritten. The real renderer `File` paste and Electron-native conversion paths were exercised independently, including invalid and oversized native payloads. |
 
+**Delivery state**
+
+- Pushed `codex/wb-006-task-queue-gui-delivery` at verified head `d0f03ab` and opened PR #6: `https://github.com/beautysamurai/workbench/pull/6`.
+- The pull request targets `main`, documents behavior, exact checks, known WSLg warnings, the unavailable physical-clipboard injection, and task scope. This delivery-record commit will become the final candidate head and requires fresh CI plus automated review.
+
 **Next action**
 
-- Review the final diff and task records, commit this exact-head delivery evidence, push the feature branch, open the WB-006 pull request, and complete exact-head CI/review. Do not merge without separate user authorization.
+- Push this delivery record, then require every configured CI job and automated review on the exact resulting head. Reflect on and resolve every in-scope finding; do not merge without separate user authorization.
 - Blocker: none established.
