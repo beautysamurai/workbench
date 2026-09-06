@@ -28,6 +28,7 @@ const api: WorkbenchApi = {
     inspect: (workspaceId) => ipcRenderer.invoke('project:inspect', workspaceId),
     initialize: (workspaceId) => ipcRenderer.invoke('project:initialize', workspaceId),
     addTask: (workspaceId, task) => ipcRenderer.invoke('project:add-task', workspaceId, task),
+    readClipboardImage: () => ipcRenderer.invoke('project:read-clipboard-image'),
   },
   system: {
     inspect: () => ipcRenderer.invoke('system:inspect'),

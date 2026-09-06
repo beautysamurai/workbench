@@ -16,6 +16,7 @@
   "include": [
     "tests/**/*.ts",
     "src/main/codex-protocol.ts",
+    "src/main/clipboard-image.ts",
     "src/main/path-utils.ts",
     "src/main/project-image-decoder-worker.ts",
     "src/main/project-system.ts",

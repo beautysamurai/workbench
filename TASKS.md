@@ -97,3 +97,18 @@ States: `pending` · `in progress` · `blocked` · `done`
   - [ ] - Terminal session suddenly exits with code 124
   - [ ] - Terminal shows collapsed characters, not supporting zsh ui.
   - [ ] - There's a block to send messages but it disable us to choose options displayed in terminal. Should be like the usual terminal block.
+
+### WB-006 — Task queue GUI enhancement
+
+- **State:** done
+- **Priority:** P0
+- **Parent:** P0-002
+- **Objective:** Make task queue GUI better
+- **Acceptance criteria:**
+  - [x] Make users really be able to paste images.
+  - [x] Keep the original quick input form visible while organizing optional task fields into a cleaner UI.
+  - [x] Make pending, active, blocked, and done tasks easy to distinguish.
+- **Evidence:** On a fresh branch from merged P0-002, the exact title-focused PNG probe first failed with no preview, then passed after WB-006 with one preview and consumed image paste while ordinary text paste remained native. The always-visible title/priority/Add controls remain usable at 1520×960 and 720×520 without horizontal overflow; optional parent/objective/criteria/images collapse under Details; and every task row presents an explicit state chip plus state-colored edge. Native clipboard conversion, supported-type selection, byte limits, asynchronous image merging, draft-preserving submission cleanup, task-offer guards, and all four state mappings have focused deterministic coverage; all 14 portable and 15 full tests, the production build, packaged-ASAR runtime, and bounded packaged-app launch pass.
+- **Hypothesis:** Confirmed. Paste handling was scoped to the drop zone, optional fields consumed the composer permanently, and state was visually secondary. Whole-form browser paste plus a main-frame-only native Electron clipboard fallback handles WSLg clipboard gaps; progressive disclosure and explicit state presentation restore the quick queue workflow.
+- **Next action:** Complete the WB-006 pull-request CI and automated-review loop; do not merge without separate authorization.
+- **Blocker:** None established.

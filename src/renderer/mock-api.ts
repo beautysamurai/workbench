@@ -239,6 +239,7 @@ export function createMockApi(): WorkbenchApi {
         projectTasks.set(workspaceId, tasks);
         return mockProjectStatus(workspaceId);
       },
+      readClipboardImage: async () => null,
     },
     system: {
       inspect: async () => ({
