@@ -6,10 +6,10 @@ Result vocabulary: `passed` · `failed` · `not run` · `unavailable`
 
 ## Current state
 
-- **Active task:** P0-002 exact-head delivery review; WB-006 final corrected-P0 replay in progress locally
+- **Active task:** WB-006 — Task queue GUI enhancement, remote delivery in progress
 - **Next task:** P0-004 — Review main/preload/renderer and IPC security
-- **Verified state:** P0-002 is locally complete with structured tasks, durable IDs, and bounded complete PNG/JPEG/VP8/VP8L attachment validation; WB-006 was verified on an earlier corrected P0-002 head with whole-form image paste, compact task composition, explicit queue states, iterative rendering, draft preservation, and ambiguity guards; merged P1-004 gives consistently scaled WSLg fullscreen exact host pointer coordinates, restores prior bounds, handles mixed or changing layouts safely, and keeps model/reasoning choices isolated per thread
-- **Next action:** Complete PR #5 exact-head CI/review and verify this WB-006 replay on `c9e77c6`; after a separately authorized P0-002 merge, transfer WB-006 to a fresh branch from updated `origin/main`
+- **Verified state:** On merged P0-002, WB-006 provides whole-form image paste with a main-frame-only native fallback, compact progressive task composition, explicit queue states, iterative rendering, draft preservation, and ambiguity guards; both local test matrices, production packaging, packaged runtime loading, and responsive renderer journeys pass
+- **Next action:** Push the clean WB-006 delivery branch, open its pull request, and require exact-head CI plus automated review; do not merge without separate authorization
 - **Genuine blocker:** None established
 
 ## Imported historical context — not current verification
@@ -2110,3 +2110,41 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Finish the local cherry-pick without pushing. Once PR #5 is separately merged, create a fresh delivery branch from fetched `origin/main`, transfer this verified WB-006 integration commit, rerun exact-head checks, and complete its CI/review loop.
 - Blocker: PR #5 merge remains a separate user-authorized action; no local implementation blocker is established.
+
+### 2026-09-06 21:51 JST — WB-006 replayed and verified on merged P0-002
+
+**Starting state and reproduction**
+
+- Fetched `origin/main` at `63758e0`, the merge of P0-002 PR #5. The primary checkout's unstaged `TASKS.md`, untracked `.workbench/`, and `image-3.png` remained untouched, as did the interrupted seven-file P0-002 review correction in its own worktree.
+- Audited the four clean local WB-006 worktrees and selected final integration commit `b4c474b`, whose 14 changed paths contain only the task-queue UI, clipboard bridge/helper, focused tests, and task records. Created `codex/wb-006-task-queue-gui-delivery` directly from fetched `origin/main` without tracking the default branch.
+- Before replay, a bounded production-renderer probe dispatched a real PNG `File` paste while `#project-task-title` had focus. The event was not consumed, no preview appeared (`previewCount: 0`), and the command exited `1`.
+
+**Integration and implementation**
+
+- Replayed the audited commit as `52eef83`. Three expected conflicts retained P0-002's richer changelog statements, stale-parent normalization regression, and complete append-only review history, then added WB-006's distinct image-limit regression and prior local evidence.
+- Image paste now works across the task form and falls back through a no-argument, main-frame-authorized Electron clipboard IPC path when WSLg omits a browser file item. Ordinary editable text paste is not intercepted. Asynchronous reads stay bound to their initiating workspace and merge into its latest draft under count and byte limits.
+- Title, priority, and Add remain immediately available. Parent, objective, criteria, and images move under remembered Details that opens for optional draft content. Queue rows use labeled/icon state chips and state edges, and the queue header summarizes open versus done tasks.
+
+**Verification**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm ci` under host Node `v22.23.2` / npm `10.9.8` | Locked WSL dependencies installed without package or lockfile changes; npm reported zero known vulnerabilities. |
+| passed | `npm run build:tests` then `node --test dist-test/tests/clipboard-image.test.js dist-test/tests/project-system.test.js dist-test/tests/project-tasks.test.js` | Native clipboard selection/validation, browser item filtering, all state mappings, limits, concurrency, parent normalization, and the complete P0 project service passed; exit `0`. |
+| passed | `npm run check:portable` | Strict checks and all 14 portable compiled test files passed; exit `0`. |
+| passed | `npm run check` | Strict checks and all 15 full compiled test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run build` | Production main/renderer compilation and asset copy completed; exit `0`. |
+| passed | exact post-fix title-focused PNG probe | The formerly failing event was consumed and produced one preview (`previewCount: 1`); exit `0`. |
+| passed | bounded production-renderer journey | At 1520×960, title and priority widths were 256 px and 112 px; at 720×520 the title was 440 px. Details collapsed initially and opened on image paste; text paste stayed native; preview add/remove succeeded; each row had a state chip; the open/done summary rendered; neither viewport overflowed horizontally; no renderer error appeared. |
+| passed | visual inspection of production captures | The desktop task queue keeps the quick form and queue side by side, while the compact view stacks them cleanly; labels make state readable without relying on color. |
+| passed | `npm run dist:dir` | Production build and Linux directory packaging completed; exit `0`. |
+| corrected harness | first packaged-ASAR inventory | The probe used four incorrect compiled-path assumptions and exited `1`; listing the archive established the actual TypeScript output paths before the corrected check. |
+| passed | corrected packaged-ASAR inventory and runtime | All six WB-006 main/preload/renderer artifacts were present. Electron loaded `clipboard-image.js` from `app.asar`, accepted the 68-byte PNG, and returned null for text-only clipboard data; exit `0`. |
+| passed | bounded packaged-app launch and cleanup | The isolated packaged app remained running until intentional termination; afterward exact process checks found neither `ai-workbench` nor `electron`. Existing DBus warnings were non-fatal. |
+| unavailable | physical Windows clipboard injection | The user's live clipboard was not overwritten. The real renderer `File` paste and Electron-native conversion paths were exercised independently, including invalid and oversized native payloads. |
+
+**Next action**
+
+- Review the final diff and task records, commit this exact-head delivery evidence, push the feature branch, open the WB-006 pull request, and complete exact-head CI/review. Do not merge without separate user authorization.
+- Blocker: none established.
