@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { TextDecoder } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import type {
   ProjectSystemFile,
@@ -303,6 +304,287 @@ function validPngHeader(bytes: Uint8Array, dataStart: number): boolean {
     && (bytes[dataStart + 12] === 0 || bytes[dataStart + 12] === 1);
 }
 
+const PNG_KNOWN_ANCILLARY_CHUNKS = new Set([
+  'acTL', 'bKGD', 'cHRM', 'cICP', 'cLLI', 'eXIf', 'fcTL', 'fdAT', 'gAMA', 'hIST',
+  'iCCP', 'iTXt', 'mDCV', 'pHYs', 'sBIT', 'sPLT', 'sRGB', 'tEXt', 'tIME', 'tRNS', 'zTXt',
+]);
+const PNG_SINGLE_ANCILLARY_CHUNKS = new Set([
+  'acTL', 'bKGD', 'cHRM', 'cICP', 'cLLI', 'eXIf', 'gAMA', 'hIST', 'iCCP', 'mDCV',
+  'pHYs', 'sBIT', 'sRGB', 'tIME', 'tRNS',
+]);
+const PNG_BEFORE_PALETTE_CHUNKS = new Set([
+  'cHRM', 'cICP', 'cLLI', 'gAMA', 'iCCP', 'mDCV', 'sBIT', 'sRGB',
+]);
+const PNG_BEFORE_IMAGE_DATA_CHUNKS = new Set([
+  ...PNG_BEFORE_PALETTE_CHUNKS,
+  'acTL', 'bKGD', 'eXIf', 'hIST', 'pHYs', 'sPLT', 'tRNS',
+]);
+const PNG_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+interface PngChunkContext {
+  bitDepth: number;
+  colorType: number;
+  hasImageData: boolean;
+  hasPalette: boolean;
+  height: number;
+  paletteEntries: number;
+  width: number;
+}
+
+interface PngAncillaryValidationState {
+  animationFrameBytes: number;
+  animationFrameControls: number;
+  animationFrames: number | null;
+  animationNeedsFrameData: boolean;
+  nextAnimationSequence: number;
+  seen: Set<string>;
+  suggestedPaletteNames: Set<string>;
+}
+
+function uint16BigEndian(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] ?? 0) << 8) + (bytes[offset + 1] ?? 0);
+}
+
+function pngNullOffset(bytes: Uint8Array, start: number, end: number): number {
+  for (let offset = start; offset < end; offset += 1) {
+    if (bytes[offset] === 0) return offset;
+  }
+  return -1;
+}
+
+function validPngKeyword(bytes: Uint8Array, start: number, end: number): boolean {
+  if (end - start < 1 || end - start > 79 || bytes[start] === 0x20 || bytes[end - 1] === 0x20) return false;
+  let previousWasSpace = false;
+  for (let offset = start; offset < end; offset += 1) {
+    const value = bytes[offset] ?? 0;
+    if (!((value >= 0x20 && value <= 0x7e) || value >= 0xa1)
+      || (value === 0x20 && previousWasSpace)) return false;
+    previousWasSpace = value === 0x20;
+  }
+  return true;
+}
+
+function validPngZlibHeader(bytes: Uint8Array, start: number, end: number): boolean {
+  if (end - start < 6) return false;
+  const methodAndWindow = bytes[start] ?? 0;
+  const flags = bytes[start + 1] ?? 0;
+  return (methodAndWindow & 0x0f) === 8
+    && (methodAndWindow >>> 4) <= 7
+    && (((methodAndWindow << 8) + flags) % 31) === 0
+    && (flags & 0x20) === 0;
+}
+
+function validPngUtf8(bytes: Uint8Array, start: number, end: number): boolean {
+  try {
+    PNG_UTF8_DECODER.decode(bytes.subarray(start, end));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validPngLanguageTag(bytes: Uint8Array, start: number, end: number): boolean {
+  if (start === end) return true;
+  if (bytes[start] === 0x2d || bytes[end - 1] === 0x2d) return false;
+  let previousWasHyphen = false;
+  for (let offset = start; offset < end; offset += 1) {
+    const value = bytes[offset] ?? 0;
+    const isHyphen = value === 0x2d;
+    if (!(isHyphen
+      || (value >= 0x30 && value <= 0x39)
+      || (value >= 0x41 && value <= 0x5a)
+      || (value >= 0x61 && value <= 0x7a))
+      || (isHyphen && previousWasHyphen)) return false;
+    previousWasHyphen = isHyphen;
+  }
+  return true;
+}
+
+function pngTextFieldsAreValid(type: string, bytes: Uint8Array, dataStart: number, dataEnd: number): boolean {
+  const keywordEnd = pngNullOffset(bytes, dataStart, dataEnd);
+  if (keywordEnd < 0 || !validPngKeyword(bytes, dataStart, keywordEnd)) return false;
+  if (type === 'tEXt') return pngNullOffset(bytes, keywordEnd + 1, dataEnd) < 0;
+  if (type === 'zTXt') {
+    const methodOffset = keywordEnd + 1;
+    return methodOffset < dataEnd
+      && bytes[methodOffset] === 0
+      && validPngZlibHeader(bytes, methodOffset + 1, dataEnd);
+  }
+
+  const flagOffset = keywordEnd + 1;
+  const methodOffset = flagOffset + 1;
+  const languageStart = methodOffset + 1;
+  if (languageStart >= dataEnd
+    || ((bytes[flagOffset] ?? 2) !== 0 && bytes[flagOffset] !== 1)
+    || bytes[methodOffset] !== 0) return false;
+  const languageEnd = pngNullOffset(bytes, languageStart, dataEnd);
+  const translatedStart = languageEnd + 1;
+  const translatedEnd = languageEnd < 0 ? -1 : pngNullOffset(bytes, translatedStart, dataEnd);
+  const textStart = translatedEnd + 1;
+  if (languageEnd < 0 || translatedEnd < 0
+    || !validPngLanguageTag(bytes, languageStart, languageEnd)
+    || !validPngUtf8(bytes, translatedStart, translatedEnd)) return false;
+  if (bytes[flagOffset] === 1) return validPngZlibHeader(bytes, textStart, dataEnd);
+  return pngNullOffset(bytes, textStart, dataEnd) < 0 && validPngUtf8(bytes, textStart, dataEnd);
+}
+
+function pngSuggestedPaletteIsValid(
+  bytes: Uint8Array,
+  dataStart: number,
+  dataEnd: number,
+  names: Set<string>,
+): boolean {
+  const nameEnd = pngNullOffset(bytes, dataStart, dataEnd);
+  if (nameEnd < 0 || !validPngKeyword(bytes, dataStart, nameEnd) || nameEnd + 1 >= dataEnd) return false;
+  const sampleDepth = bytes[nameEnd + 1] ?? 0;
+  const entrySize = sampleDepth === 8 ? 6 : sampleDepth === 16 ? 10 : 0;
+  const entriesStart = nameEnd + 2;
+  if (!entrySize || (dataEnd - entriesStart) % entrySize !== 0) return false;
+  let previousFrequency = 0xffff;
+  for (let offset = entriesStart; offset < dataEnd; offset += entrySize) {
+    const frequency = uint16BigEndian(bytes, offset + entrySize - 2);
+    if (frequency > previousFrequency) return false;
+    previousFrequency = frequency;
+  }
+  const name = Buffer.from(bytes.subarray(dataStart, nameEnd)).toString('hex');
+  if (names.has(name)) return false;
+  names.add(name);
+  return true;
+}
+
+function pngAnimationChunkIsValid(
+  type: 'acTL' | 'fcTL' | 'fdAT',
+  bytes: Uint8Array,
+  dataStart: number,
+  dataEnd: number,
+  context: PngChunkContext,
+  state: PngAncillaryValidationState,
+): boolean {
+  const length = dataEnd - dataStart;
+  if (type === 'acTL') {
+    const frames = uint32BigEndian(bytes, dataStart);
+    if (context.hasImageData || length !== 8 || frames === 0) return false;
+    state.animationFrames = frames;
+    return true;
+  }
+  if (state.animationFrames === null) return false;
+  const sequence = uint32BigEndian(bytes, dataStart);
+  if (sequence !== state.nextAnimationSequence) return false;
+  state.nextAnimationSequence += 1;
+  if (type === 'fdAT') {
+    if (!context.hasImageData || !state.animationNeedsFrameData || length < 4) return false;
+    state.animationFrameBytes += length - 4;
+    return true;
+  }
+
+  const frameWidth = uint32BigEndian(bytes, dataStart + 4);
+  const frameHeight = uint32BigEndian(bytes, dataStart + 8);
+  const xOffset = uint32BigEndian(bytes, dataStart + 12);
+  const yOffset = uint32BigEndian(bytes, dataStart + 16);
+  if (length !== 26
+    || frameWidth === 0 || frameHeight === 0
+    || frameWidth > context.width || frameHeight > context.height
+    || xOffset > context.width - frameWidth || yOffset > context.height - frameHeight
+    || (bytes[dataStart + 24] ?? 3) > 2
+    || (bytes[dataStart + 25] ?? 2) > 1) return false;
+  if (!context.hasImageData) {
+    if (state.animationFrameControls !== 0
+      || frameWidth !== context.width || frameHeight !== context.height
+      || xOffset !== 0 || yOffset !== 0) return false;
+  } else {
+    if (state.animationNeedsFrameData && state.animationFrameBytes === 0) return false;
+    state.animationNeedsFrameData = true;
+    state.animationFrameBytes = 0;
+  }
+  state.animationFrameControls += 1;
+  return state.animationFrameControls <= state.animationFrames;
+}
+
+function knownPngAncillaryChunkIsValid(
+  type: string,
+  bytes: Uint8Array,
+  dataStart: number,
+  dataEnd: number,
+  context: PngChunkContext,
+  state: PngAncillaryValidationState,
+): boolean {
+  const length = dataEnd - dataStart;
+  if (PNG_SINGLE_ANCILLARY_CHUNKS.has(type)) {
+    if (state.seen.has(type)) return false;
+    state.seen.add(type);
+  }
+  if ((PNG_BEFORE_PALETTE_CHUNKS.has(type) && (context.hasPalette || context.hasImageData))
+    || (PNG_BEFORE_IMAGE_DATA_CHUNKS.has(type) && context.hasImageData)) return false;
+
+  if (type === 'acTL' || type === 'fcTL' || type === 'fdAT') {
+    return pngAnimationChunkIsValid(type, bytes, dataStart, dataEnd, context, state);
+  }
+  if (type === 'cHRM') return length === 32;
+  if (type === 'gAMA') return length === 4;
+  if (type === 'iCCP') {
+    const nameEnd = pngNullOffset(bytes, dataStart, dataEnd);
+    const methodOffset = nameEnd + 1;
+    return nameEnd >= 0
+      && validPngKeyword(bytes, dataStart, nameEnd)
+      && methodOffset < dataEnd
+      && bytes[methodOffset] === 0
+      && validPngZlibHeader(bytes, methodOffset + 1, dataEnd);
+  }
+  if (type === 'sBIT') {
+    const channels = ({ 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 } as Record<number, number>)[context.colorType] ?? 0;
+    const sampleDepth = context.colorType === 3 ? 8 : context.bitDepth;
+    if (length !== channels) return false;
+    return bytes.subarray(dataStart, dataEnd).every((value) => value > 0 && value <= sampleDepth);
+  }
+  if (type === 'sRGB') return length === 1 && (bytes[dataStart] ?? 4) <= 3;
+  if (type === 'cICP') return length === 4 && bytes[dataStart + 2] === 0 && (bytes[dataStart + 3] ?? 2) <= 1;
+  if (type === 'mDCV') return length === 24;
+  if (type === 'cLLI') return length === 8;
+  if (type === 'bKGD') {
+    if (context.colorType === 3) {
+      return context.hasPalette && length === 1 && (bytes[dataStart] ?? 256) < context.paletteEntries;
+    }
+    return length === (context.colorType === 0 || context.colorType === 4 ? 2 : 6);
+  }
+  if (type === 'hIST') return context.hasPalette && length === context.paletteEntries * 2;
+  if (type === 'tRNS') {
+    if (context.colorType === 0) return length === 2;
+    if (context.colorType === 2) return length === 6;
+    if (context.colorType === 3) return context.hasPalette && length > 0 && length <= context.paletteEntries;
+    return false;
+  }
+  if (type === 'eXIf') {
+    return length >= 4 && (startsWithBytes(bytes, [0x49, 0x49, 0x2a, 0], dataStart)
+      || startsWithBytes(bytes, [0x4d, 0x4d, 0, 0x2a], dataStart));
+  }
+  if (type === 'pHYs') return length === 9 && (bytes[dataStart + 8] ?? 2) <= 1;
+  if (type === 'sPLT') return pngSuggestedPaletteIsValid(
+    bytes,
+    dataStart,
+    dataEnd,
+    state.suggestedPaletteNames,
+  );
+  if (type === 'tIME') {
+    return length === 7
+      && (bytes[dataStart + 2] ?? 0) >= 1 && (bytes[dataStart + 2] ?? 13) <= 12
+      && (bytes[dataStart + 3] ?? 0) >= 1 && (bytes[dataStart + 3] ?? 32) <= 31
+      && (bytes[dataStart + 4] ?? 24) <= 23
+      && (bytes[dataStart + 5] ?? 60) <= 59
+      && (bytes[dataStart + 6] ?? 61) <= 60;
+  }
+  if (type === 'tEXt' || type === 'zTXt' || type === 'iTXt') {
+    return pngTextFieldsAreValid(type, bytes, dataStart, dataEnd);
+  }
+  return false;
+}
+
+function completePngAncillaryStateIsValid(state: PngAncillaryValidationState): boolean {
+  return !(state.seen.has('mDCV') && !state.seen.has('cICP'))
+    && (state.animationFrames === null
+      || (state.animationFrameControls === state.animationFrames
+        && (!state.animationNeedsFrameData || state.animationFrameBytes > 0)));
+}
+
 interface PngScanlinePass {
   rowBytes: number;
   rowCount: number;
@@ -366,6 +648,15 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
   let imageDataEnded = false;
   let imageDataBytes = 0;
   const imageDataChunks: Uint8Array[] = [];
+  const ancillaryState: PngAncillaryValidationState = {
+    animationFrameBytes: 0,
+    animationFrameControls: 0,
+    animationFrames: null,
+    animationNeedsFrameData: false,
+    nextAnimationSequence: 0,
+    seen: new Set(),
+    suggestedPaletteNames: new Set(),
+  };
 
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length || !isPngChunkType(bytes, offset + 4)) return null;
@@ -377,6 +668,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
     if (pngCrc32(bytes, offset + 4, dataEnd) !== uint32BigEndian(bytes, dataEnd)) return null;
 
     const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
+    if (hasImageData && type !== 'IDAT' && type !== 'IEND') imageDataEnded = true;
     if (offset === 8) {
       if (type !== 'IHDR' || length !== 13 || !validPngHeader(bytes, dataStart)) return null;
       bitDepth = bytes[dataStart + 8] ?? 0;
@@ -390,7 +682,10 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
       const entries = length / 3;
       if (hasPalette || hasImageData || colorType === 0 || colorType === 4
         || length === 0 || length % 3 !== 0 || entries > 256
-        || (colorType === 3 && entries > (2 ** bitDepth))) return null;
+        || (colorType === 3 && entries > (2 ** bitDepth))
+        || ancillaryState.seen.has('bKGD')
+        || ancillaryState.seen.has('hIST')
+        || ancillaryState.seen.has('tRNS')) return null;
       hasPalette = true;
       paletteEntries = entries;
     } else if (type === 'IDAT') {
@@ -403,6 +698,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
         || !hasImageData
         || imageDataBytes <= 0
         || (colorType === 3 && !hasPalette)
+        || !completePngAncillaryStateIsValid(ancillaryState)
         || chunkEnd !== bytes.length) return null;
       const passes = pngScanlinePasses(width, height, bitDepth, colorType, interlace);
       if (!passes) return null;
@@ -413,9 +709,18 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
         compressedOffset += chunk.length;
       }
       return { bitDepth, colorType, compressed, paletteEntries, passes };
+    } else if (PNG_KNOWN_ANCILLARY_CHUNKS.has(type)) {
+      if (!knownPngAncillaryChunkIsValid(type, bytes, dataStart, dataEnd, {
+        bitDepth,
+        colorType,
+        hasImageData,
+        hasPalette,
+        height,
+        paletteEntries,
+        width,
+      }, ancillaryState)) return null;
     } else {
       if ((bytes[offset + 4] ?? 0) >= 0x41 && (bytes[offset + 4] ?? 0) <= 0x5a) return null;
-      if (hasImageData) imageDataEnded = true;
     }
     offset = chunkEnd;
   }

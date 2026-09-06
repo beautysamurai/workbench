@@ -56,6 +56,17 @@ function pngChunk(type: string, payload: Uint8Array): Buffer {
   return chunk;
 }
 
+function pngWithChunksBefore(pngBytes: Uint8Array, targetType: 'PLTE' | 'IDAT' | 'IEND', chunks: Buffer[]): Uint8Array {
+  const png = Buffer.from(pngBytes);
+  const typeOffset = png.indexOf(targetType);
+  assert.notEqual(typeOffset, -1);
+  return Uint8Array.from(Buffer.concat([
+    png.subarray(0, typeOffset - 4),
+    ...chunks,
+    png.subarray(typeOffset - 4),
+  ]));
+}
+
 function compressibleRgbaPng(width: number, height: number): Uint8Array {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
@@ -491,6 +502,99 @@ test('rejects PNGs without image data or with corrupted chunk data', async () =>
     validateProjectTaskImage({ bytes: pngWithImageData(deflateSync(Uint8Array.of(0, 0))) }),
     /PNG, JPEG, or WebP/,
   );
+});
+
+test('validates recognized PNG ancillary chunk structure and ordering', async () => {
+  const png = tinyPng();
+  const compressedMetadata = deflateSync(Buffer.from('metadata'));
+  const physicalDimensions = Buffer.alloc(9);
+  physicalDimensions[8] = 1;
+  const frameControl = Buffer.alloc(26);
+  frameControl.writeUInt32BE(1, 4);
+  frameControl.writeUInt32BE(1, 8);
+  const animationControl = Buffer.alloc(8);
+  animationControl.writeUInt32BE(1, 0);
+  const validBeforeImageData: Array<[string, Uint8Array]> = [
+    ['cHRM', Buffer.alloc(32)],
+    ['gAMA', Buffer.from([0, 0, 0xb1, 0x8f])],
+    ['iCCP', Buffer.concat([Buffer.from('profile\0\0'), compressedMetadata])],
+    ['sBIT', Buffer.from([8, 8])],
+    ['sRGB', Buffer.from([0])],
+    ['cICP', Buffer.from([1, 1, 0, 1])],
+    ['cLLI', Buffer.alloc(8)],
+    ['bKGD', Buffer.alloc(2)],
+    ['eXIf', Buffer.from([0x49, 0x49, 0x2a, 0])],
+    ['pHYs', physicalDimensions],
+    ['sPLT', Buffer.concat([
+      Buffer.from('palette\0'),
+      Buffer.from([8, 0, 0, 0, 0xff, 0, 1]),
+    ])],
+  ];
+  for (const [type, payload] of validBeforeImageData) {
+    assert.equal((await validateProjectTaskImage({
+      bytes: pngWithChunksBefore(png, 'IDAT', [pngChunk(type, payload)]),
+    })).mediaType, 'image/png', type);
+  }
+  assert.equal((await validateProjectTaskImage({
+    bytes: pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('cICP', Buffer.from([1, 1, 0, 1])),
+      pngChunk('mDCV', Buffer.alloc(24)),
+    ]),
+  })).mediaType, 'image/png');
+  assert.equal((await validateProjectTaskImage({
+    bytes: pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('acTL', animationControl),
+      pngChunk('fcTL', frameControl),
+    ]),
+  })).mediaType, 'image/png');
+
+  const validAnywhere: Array<[string, Uint8Array]> = [
+    ['tEXt', Buffer.from('Comment\0plain text')],
+    ['zTXt', Buffer.concat([Buffer.from('Comment\0\0'), compressedMetadata])],
+    ['iTXt', Buffer.from('Comment\0\0\0en\0Comment\0plain text')],
+    ['tIME', Buffer.from([0x07, 0xe8, 1, 1, 0, 0, 0])],
+    ['vpAg', Buffer.from([1, 2, 3])],
+  ];
+  for (const [type, payload] of validAnywhere) {
+    assert.equal((await validateProjectTaskImage({
+      bytes: pngWithChunksBefore(png, 'IEND', [pngChunk(type, payload)]),
+    })).mediaType, 'image/png', type);
+  }
+
+  const invalidPngs = [
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('tRNS', Buffer.alloc(2))]),
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('cHRM', Buffer.alloc(31))]),
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('sBIT', Buffer.from([9, 8]))]),
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('pHYs', Buffer.from([...Buffer.alloc(8), 2]))]),
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('mDCV', Buffer.alloc(24))]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('gAMA', Buffer.alloc(4)),
+      pngChunk('gAMA', Buffer.alloc(4)),
+    ]),
+    pngWithChunksBefore(png, 'IEND', [pngChunk('gAMA', Buffer.alloc(4))]),
+    pngWithChunksBefore(png, 'IEND', [pngChunk('tIME', Buffer.from([0x07, 0xe8, 13, 1, 0, 0, 0]))]),
+    pngWithChunksBefore(png, 'IEND', [pngChunk('tEXt', Buffer.from('missing separator'))]),
+  ];
+  for (const invalidPng of invalidPngs) {
+    await assert.rejects(validateProjectTaskImage({ bytes: invalidPng }), /PNG, JPEG, or WebP/);
+  }
+
+  const indexed = indexedPng(1, 8, 1, Uint8Array.of(0, 0));
+  assert.equal((await validateProjectTaskImage({
+    bytes: pngWithChunksBefore(indexed, 'IDAT', [
+      pngChunk('bKGD', Buffer.from([0])),
+      pngChunk('hIST', Buffer.alloc(2)),
+      pngChunk('tRNS', Buffer.from([0xff])),
+    ]),
+  })).mediaType, 'image/png');
+  for (const invalidIndexed of [
+    pngWithChunksBefore(indexed, 'PLTE', [pngChunk('tRNS', Buffer.from([0xff]))]),
+    pngWithChunksBefore(indexed, 'IDAT', [pngChunk('tRNS', Buffer.from([0xff, 0xff]))]),
+    pngWithChunksBefore(indexed, 'IDAT', [pngChunk('bKGD', Buffer.from([1]))]),
+    pngWithChunksBefore(indexed, 'IDAT', [pngChunk('hIST', Buffer.alloc(4))]),
+  ]) {
+    await assert.rejects(validateProjectTaskImage({ bytes: invalidIndexed }), /PNG, JPEG, or WebP/);
+  }
 });
 
 test('reconstructs indexed PNG scanlines and rejects missing palette entries', async () => {

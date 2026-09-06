@@ -1937,3 +1937,40 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 - `npm run dist:dir` rebuilt the exact production source and Linux directory package. The packaged-ASAR validator then passed with `initCommitSafe`, `installRollbackSafe`, `sequenceRaceSafe`, `candidateRaceSafe`, and every earlier flag true.
 - `npm audit --omit=dev` again reported zero production vulnerabilities and `git diff --check` passed. No source edit followed these frozen checks.
 - Next action: commit and push the frozen initialization-lock correction, resolve its review thread with evidence, and require green exact-head CI plus a clean exact-head automated review. Blocker: none established.
+
+### 2026-09-06 17:02 JST — P0-002 recognized-PNG-ancillary review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `bcf2e78` passed both workflow events: Linux verification completed in 42 and 20 seconds, and Windows package jobs completed in 1 minute 44 seconds and 1 minute 55 seconds. Automated Codex review completed on that exact commit after all 36 prior threads were resolved and opened one P2 finding.
+- The finding is accepted. `inspectStructuredPng` CRC-checked every chunk but treated every ancillary chunk as opaque, so it did not enforce the PNG specification's recognized-chunk multiplicity, placement, payload-length, palette, or color-type relationships.
+- Before correction, `node /tmp/workbench-p0-png-ancillary-repro.cjs` inserted a CRC-correct two-byte `tRNS` chunk into the existing color-type-4 fixture. The validator accepted the forbidden transparency chunk (`accepted: true`) and the command exited `1`.
+
+**Scoped correction**
+
+- The PNG container parser now recognizes the standard static and animated ancillary chunks. Single-use chunks reject duplicates; pre-palette and pre-image-data chunks enforce their ordering; `bKGD`, `hIST`, `sBIT`, and `tRNS` validate their color/palette-specific shapes; fixed-field, text, profile, suggested-palette, timestamp, and HDR chunks validate their defined payload structure; and APNG controls validate frame counts, sequence numbers, canvas bounds, and required frame data.
+- A later optional `PLTE` is rejected if an earlier `bKGD`, `hIST`, or `tRNS` would make that order invalid. Unknown ancillary extension chunks remain ignorable, while any intervening chunk still closes the contiguous `IDAT` sequence.
+- Focused regressions retain valid standard metadata, a one-frame APNG control sequence, indexed transparency/background/histogram metadata, and an unknown private ancillary chunk. They reject the exact alpha-bearing `tRNS`, invalid lengths/fields, duplicates, forbidden placement, missing HDR dependency, malformed text, and palette-dependent violations.
+- Files changed: `src/main/project-system.ts`, `tests/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | The focused project-system file passed the recognized ancillary positives/negatives and all prior task/image cases; exit `0`. |
+| passed | `node /tmp/workbench-p0-png-ancillary-repro.cjs` | The exact color-type-4 `tRNS` fixture is now rejected (`accepted: false`); exit `0`. |
+| passed | `node /tmp/workbench-p0-png-corpus.cjs` | All 221 PNG files at or below the task-image size limit under `/usr/share` remained accepted; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `illegalAncillaryRejected`, `initCommitSafe`, `installRollbackSafe`, `sequenceRaceSafe`, `candidateRaceSafe`, and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for over six seconds until intentional SIGINT (npm reported expected signal exit `1`), then `pgrep -a -x electron` found no process (expected no-match exit `1`). Existing DBus warnings were non-fatal. |
+| passed | three parallel emitted WSL runs | After rebuilding the emitted tests removed by production cleanup, all three independent runs passed the WSL file; exit `0` each. The initial post-package attempts only reported the expected missing `dist-test` output and did not execute tests. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this recognized-ancillary correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.
