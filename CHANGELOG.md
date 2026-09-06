@@ -43,3 +43,4 @@ Use the categories `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, and `R
 - Prepared `TASKS.md` candidates are identity-, mode-, size-, link-, and digest-checked immediately around installation; a concurrently modified candidate is discarded and the exact prior task file is restored before retrying.
 - Task-ID counter candidates remain descriptor-pinned and are revalidated before, during, and after no-clobber installation; a changed candidate is rejected and the exact prior high-water counter is restored.
 - Project workflow symlinks are rejected consistently before task IDs or images are staged; image-install rollback and failed-task cleanup preserve any attachment path that another process replaced after Workbench wrote it.
+- Markdown workflow setup now shares the workspace task lock with task-file commits, preserving the existing task board when another Workbench process initializes during an atomic update.

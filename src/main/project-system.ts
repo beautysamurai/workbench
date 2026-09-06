@@ -1025,7 +1025,7 @@ export async function inspectProjectSystem(workspace: Workspace): Promise<Projec
 }
 
 export async function initializeProjectSystem(workspace: Workspace): Promise<ProjectSystemStatus> {
-  const statements: string[] = [];
+  const statements: string[] = [...projectTaskLockStatements()];
   for (const name of PROJECT_FILES) {
     statements.push(
       `target="$root_fd/${name}"`,

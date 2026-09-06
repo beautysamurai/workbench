@@ -1893,3 +1893,47 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this rollback correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
 - Blocker: none established.
+
+### 2026-09-03 22:08 JST — P0-002 workflow-initialization serialization correction
+
+**Exact-head review and reproduction**
+
+- Exact head `73c54f7` passed both workflow events: Linux verification completed in 30 and 22 seconds, and Windows package jobs completed in 1 minute 59 seconds and 2 minutes. Automated Codex review completed on that exact commit after all 35 prior threads were resolved and opened one P1 finding.
+- The finding is accepted. A task-file transaction deliberately moves the exact prior `TASKS.md` entry to a private claim before no-clobber candidate installation. A second Workbench process could run unlocked workflow initialization during that interval, misclassify the canonical path as genuinely missing, and recreate the empty template. The first transaction then preserved the new pathname but discarded its claim and retried against that template, losing the existing board.
+- Before correction, `node /tmp/workbench-p0-init-commit-race-repro.cjs` invoked the real initializer after the exact task-file claim. The task add returned success and appeared once, but `Existing board task` disappeared and the file began with the default template (`existingPreserved: false`, `safe: false`, exit `1`).
+
+**Scoped correction**
+
+- `initializeProjectSystem` now acquires the same descriptor-validated, single-link workspace task lock used by sequence reservations and task-file commits before creating or validating any workflow Markdown file. A concurrent initializer therefore waits until the canonical `TASKS.md` entry is restored or committed.
+- The setup operation now creates `.workbench/task-sequence.lock` as its coordination primitive. Existing boundary tests were adjusted to treat that directory as already present, and the metadata-path swap test initializes its workflow before injecting the later mutation it is intended to exercise.
+- A deterministic cross-process regression pauses the committing shell after the real `TASKS.md` claim, launches the real initializer in a separate Node process, proves that initializer reaches and waits on `flock`, then verifies it completes after commit with both the existing `P1-004` task and exactly one new `WB-005` task intact.
+- Files changed: `src/main/project-system.ts`, `tests/wsl/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `node /tmp/workbench-p0-init-commit-race-repro.cjs` | The initializer attempted the exact claim window, the add succeeded once, the original task remained, `safe` was `true`, and the command exited `0`. |
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 27 named task/image/filesystem cases passed, including the cross-process initializer wait; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; the real separate Electron-as-Node initializer reported `initCommitSafe`, and `installRollbackSafe`, `sequenceRaceSafe`, `candidateRaceSafe`, plus every prior image/task-filesystem flag were true; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for over five seconds until intentional SIGINT (npm reported expected signal exit `1`), then `pgrep -a -x electron` found no process (expected no-match exit `1`). Existing DBus/GPU warnings were non-fatal. |
+| passed | three parallel emitted WSL runs | All three independent runs passed all 27 cases; exit `0` each. |
+| passed | `node /tmp/workbench-p0-image-post-install-race-repro.mjs` | The preceding image-install rollback correction remained safe; exit `0`. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this initialization-lock correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.
+
+### 2026-09-06 16:40 JST — P0-002 resumed frozen verification
+
+- Work resumed without changing the correction's scope. The bounded cross-process regression passed all 27 named WSL cases, and `npm run check` passed strict type checks plus all 14 full files.
+- `npm run dist:dir` rebuilt the exact production source and Linux directory package. The packaged-ASAR validator then passed with `initCommitSafe`, `installRollbackSafe`, `sequenceRaceSafe`, `candidateRaceSafe`, and every earlier flag true.
+- `npm audit --omit=dev` again reported zero production vulnerabilities and `git diff --check` passed. No source edit followed these frozen checks.
+- Next action: commit and push the frozen initialization-lock correction, resolve its review thread with evidence, and require green exact-head CI plus a clean exact-head automated review. Blocker: none established.

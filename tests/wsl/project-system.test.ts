@@ -376,6 +376,93 @@ exec /usr/bin/mv "$@"
   });
 });
 
+test('serializes workflow initialization with an in-flight task-file commit', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-init-commit-race-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const claimMarker = path.join(toolsDirectory, 'task-file-claimed');
+    const waitingMarker = path.join(toolsDirectory, 'initializer-waiting');
+    const completedMarker = path.join(toolsDirectory, 'initializer-completed');
+    const childError = path.join(toolsDirectory, 'initializer-error');
+    const modulePath = path.resolve(__dirname, '../../src/main/project-system.js');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Existing board task\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Must survive initialization.\n', 'utf8');
+    fs.writeFileSync(path.join(toolsDirectory, 'flock'), `#!/bin/bash
+set -u
+if [ -e "$WORKBENCH_TEST_INIT_CLAIM_MARKER" ] && [ ! -e "$WORKBENCH_TEST_INIT_WAITING_MARKER" ]; then
+  : > "$WORKBENCH_TEST_INIT_WAITING_MARKER"
+fi
+exec /usr/bin/flock "$@"
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(toolsDirectory, 'mv'), `#!/bin/bash
+set -u
+source_path="\${@: -2:1}"
+claim_path="\${@: -1}"
+/usr/bin/mv "$@"
+status=$?
+if [ "$status" -eq 0 ] && [[ "$source_path" == */TASKS.md ]] && [[ "$claim_path" == */.TASKS.md.workbench-previous-* ]] && [ ! -e "$WORKBENCH_TEST_INIT_CLAIM_MARKER" ]; then
+  : > "$WORKBENCH_TEST_INIT_CLAIM_MARKER"
+  (exec 9>&-; "$WORKBENCH_TEST_NODE" -e 'const fs = require("node:fs"); const { initializeProjectSystem } = require(process.env.WORKBENCH_TEST_PROJECT_MODULE); initializeProjectSystem(JSON.parse(process.env.WORKBENCH_TEST_WORKSPACE)).then(() => { fs.writeFileSync(process.env.WORKBENCH_TEST_INIT_COMPLETED_MARKER, "done"); }).catch((error) => { fs.writeFileSync(process.env.WORKBENCH_TEST_INIT_ERROR, String(error)); process.exitCode = 1; });') >/dev/null 2>&1 &
+  attempts=0
+  while [ ! -e "$WORKBENCH_TEST_INIT_COMPLETED_MARKER" ] && [ ! -e "$WORKBENCH_TEST_INIT_WAITING_MARKER" ]; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 500 ]; then printf 'Concurrent initializer did not reach workflow setup' >&2; exit 97; fi
+    sleep 0.01
+  done
+fi
+exit "$status"
+`, { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      claim: process.env.WORKBENCH_TEST_INIT_CLAIM_MARKER,
+      waiting: process.env.WORKBENCH_TEST_INIT_WAITING_MARKER,
+      completed: process.env.WORKBENCH_TEST_INIT_COMPLETED_MARKER,
+      error: process.env.WORKBENCH_TEST_INIT_ERROR,
+      node: process.env.WORKBENCH_TEST_NODE,
+      module: process.env.WORKBENCH_TEST_PROJECT_MODULE,
+      workspace: process.env.WORKBENCH_TEST_WORKSPACE,
+    };
+    process.env.PATH = `${toolsDirectory}:${oldEnvironment.path ?? ''}`;
+    process.env.WORKBENCH_TEST_INIT_CLAIM_MARKER = claimMarker;
+    process.env.WORKBENCH_TEST_INIT_WAITING_MARKER = waitingMarker;
+    process.env.WORKBENCH_TEST_INIT_COMPLETED_MARKER = completedMarker;
+    process.env.WORKBENCH_TEST_INIT_ERROR = childError;
+    process.env.WORKBENCH_TEST_NODE = process.execPath;
+    process.env.WORKBENCH_TEST_PROJECT_MODULE = modulePath;
+    process.env.WORKBENCH_TEST_WORKSPACE = JSON.stringify(workspace);
+    try {
+      const updated = await addProjectTask(workspace, { title: 'Concurrent add', priority: 'P1' });
+      const deadline = Date.now() + 5_000;
+      while (!fs.existsSync(completedMarker) && !fs.existsSync(childError) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(fs.existsSync(claimMarker), true, 'The test must pause with TASKS.md claimed.');
+      assert.equal(fs.existsSync(waitingMarker), true, 'The concurrent initializer must wait for the task lock.');
+      assert.equal(fs.existsSync(childError), false, fs.existsSync(childError) ? fs.readFileSync(childError, 'utf8') : '');
+      assert.equal(fs.existsSync(completedMarker), true, 'The initializer must finish after the commit releases the lock.');
+      assert.equal(updated.tasks.at(-1)?.id, 'WB-005');
+      const markdown = fs.readFileSync(tasksPath, 'utf8');
+      assert.match(markdown, /Existing board task/);
+      assert.equal((markdown.match(/^### WB-005 — Concurrent add$/gm) ?? []).length, 1);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      for (const [name, value] of [
+        ['PATH', oldEnvironment.path],
+        ['WORKBENCH_TEST_INIT_CLAIM_MARKER', oldEnvironment.claim],
+        ['WORKBENCH_TEST_INIT_WAITING_MARKER', oldEnvironment.waiting],
+        ['WORKBENCH_TEST_INIT_COMPLETED_MARKER', oldEnvironment.completed],
+        ['WORKBENCH_TEST_INIT_ERROR', oldEnvironment.error],
+        ['WORKBENCH_TEST_NODE', oldEnvironment.node],
+        ['WORKBENCH_TEST_PROJECT_MODULE', oldEnvironment.module],
+        ['WORKBENCH_TEST_WORKSPACE', oldEnvironment.workspace],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 test('serializes concurrent additions so automatically assigned ids remain unique', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     const [first, second] = await Promise.all([
@@ -489,7 +576,7 @@ exec /usr/bin/ln "$@"
 test('rejects corrupt sequence metadata and ambiguous parent ids', async () => {
   await temporaryWorkspace(async (workspace, directory) => {
     await initializeProjectSystem(workspace);
-    fs.mkdirSync(path.join(directory, '.workbench'));
+    fs.mkdirSync(path.join(directory, '.workbench'), { recursive: true });
     fs.writeFileSync(path.join(directory, '.workbench/task-sequence'), 'not-a-number\n', 'utf8');
     await assert.rejects(addProjectTask(workspace, { title: 'No reset', priority: 'P2' }), /sequence is corrupt/);
   });
@@ -590,7 +677,7 @@ test('rejects invalid parents and unsafe task-image directory boundaries', async
     await initializeProjectSystem(workspace);
     await assert.rejects(addProjectTask(workspace, { title: 'Orphan', priority: 'P1', parentId: 'WB-999' }), /existing parent/);
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-images-outside-'));
-    fs.mkdirSync(path.join(directory, '.workbench'));
+    fs.mkdirSync(path.join(directory, '.workbench'), { recursive: true });
     fs.symlinkSync(outside, path.join(directory, '.workbench/task-images'));
     try {
       const png = tinyPng();
@@ -758,6 +845,7 @@ test('does not follow a task-metadata directory replacement after lock validatio
     const metadataDirectory = path.join(directory, '.workbench');
     const marker = path.join(toolsDirectory, 'swapped');
     const statWrapper = path.join(toolsDirectory, 'stat');
+    await initializeProjectSystem(workspace);
     fs.writeFileSync(statWrapper, `#!/bin/bash
 set -eu
 actual=/usr/bin/stat
@@ -983,7 +1071,7 @@ test('refuses non-regular project files and task-sequence symlinks', async () =>
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-sequence-outside-'));
     const outsideSequence = path.join(outside, 'sequence');
     fs.writeFileSync(outsideSequence, '100\n', 'utf8');
-    fs.mkdirSync(path.join(directory, '.workbench'));
+    fs.mkdirSync(path.join(directory, '.workbench'), { recursive: true });
     fs.symlinkSync(outsideSequence, path.join(directory, '.workbench/task-sequence'));
     try {
       await assert.rejects(addProjectTask(workspace, { title: 'Unsafe sequence', priority: 'P1' }), /sequence is unsafe/);
