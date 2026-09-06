@@ -27,6 +27,8 @@ const MAX_TASK_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TASK_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 40_000_000;
 const MAX_PNG_INFLATED_BYTES = 160 * 1024 * 1024;
+const MAX_PNG_ANIMATION_FRAMES = 128;
+const MAX_PNG_COMPRESSED_METADATA_STREAMS = 128;
 const MAX_WEBP_IMAGE_CHUNKS = 128;
 const MAX_PENDING_PROJECT_IMAGE_DECODES = 8;
 const PROJECT_IMAGE_DECODE_TIMEOUT_MS = 15_000;
@@ -331,11 +333,26 @@ interface PngChunkContext {
   width: number;
 }
 
+type PngCompressedMetadataKind = 'profile' | 'latin1' | 'utf8';
+
+interface PngCompressedMetadata {
+  compressed: Uint8Array;
+  kind: PngCompressedMetadataKind;
+}
+
+interface PendingPngAnimationFrame {
+  chunks: Uint8Array[];
+  compressedBytes: number;
+  height: number;
+  width: number;
+}
+
 interface PngAncillaryValidationState {
-  animationFrameBytes: number;
   animationFrameControls: number;
   animationFrames: number | null;
-  animationNeedsFrameData: boolean;
+  animationImageFrames: PendingPngAnimationFrame[];
+  compressedMetadata: PngCompressedMetadata[];
+  imagePixels: number;
   nextAnimationSequence: number;
   seen: Set<string>;
   suggestedPaletteNames: Set<string>;
@@ -374,6 +391,18 @@ function validPngZlibHeader(bytes: Uint8Array, start: number, end: number): bool
     && (flags & 0x20) === 0;
 }
 
+function retainPngCompressedMetadata(
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+  kind: PngCompressedMetadataKind,
+  streams: PngCompressedMetadata[],
+): boolean {
+  if (streams.length >= MAX_PNG_COMPRESSED_METADATA_STREAMS || !validPngZlibHeader(bytes, start, end)) return false;
+  streams.push({ compressed: bytes.subarray(start, end), kind });
+  return true;
+}
+
 function validPngUtf8(bytes: Uint8Array, start: number, end: number): boolean {
   try {
     PNG_UTF8_DECODER.decode(bytes.subarray(start, end));
@@ -400,7 +429,13 @@ function validPngLanguageTag(bytes: Uint8Array, start: number, end: number): boo
   return true;
 }
 
-function pngTextFieldsAreValid(type: string, bytes: Uint8Array, dataStart: number, dataEnd: number): boolean {
+function pngTextFieldsAreValid(
+  type: string,
+  bytes: Uint8Array,
+  dataStart: number,
+  dataEnd: number,
+  compressedMetadata: PngCompressedMetadata[],
+): boolean {
   const keywordEnd = pngNullOffset(bytes, dataStart, dataEnd);
   if (keywordEnd < 0 || !validPngKeyword(bytes, dataStart, keywordEnd)) return false;
   if (type === 'tEXt') return pngNullOffset(bytes, keywordEnd + 1, dataEnd) < 0;
@@ -408,7 +443,13 @@ function pngTextFieldsAreValid(type: string, bytes: Uint8Array, dataStart: numbe
     const methodOffset = keywordEnd + 1;
     return methodOffset < dataEnd
       && bytes[methodOffset] === 0
-      && validPngZlibHeader(bytes, methodOffset + 1, dataEnd);
+      && retainPngCompressedMetadata(
+        bytes,
+        methodOffset + 1,
+        dataEnd,
+        'latin1',
+        compressedMetadata,
+      );
   }
 
   const flagOffset = keywordEnd + 1;
@@ -424,7 +465,9 @@ function pngTextFieldsAreValid(type: string, bytes: Uint8Array, dataStart: numbe
   if (languageEnd < 0 || translatedEnd < 0
     || !validPngLanguageTag(bytes, languageStart, languageEnd)
     || !validPngUtf8(bytes, translatedStart, translatedEnd)) return false;
-  if (bytes[flagOffset] === 1) return validPngZlibHeader(bytes, textStart, dataEnd);
+  if (bytes[flagOffset] === 1) {
+    return retainPngCompressedMetadata(bytes, textStart, dataEnd, 'utf8', compressedMetadata);
+  }
   return pngNullOffset(bytes, textStart, dataEnd) < 0 && validPngUtf8(bytes, textStart, dataEnd);
 }
 
@@ -463,7 +506,7 @@ function pngAnimationChunkIsValid(
   const length = dataEnd - dataStart;
   if (type === 'acTL') {
     const frames = uint32BigEndian(bytes, dataStart);
-    if (context.hasImageData || length !== 8 || frames === 0) return false;
+    if (context.hasImageData || length !== 8 || frames === 0 || frames > MAX_PNG_ANIMATION_FRAMES) return false;
     state.animationFrames = frames;
     return true;
   }
@@ -472,8 +515,10 @@ function pngAnimationChunkIsValid(
   if (sequence !== state.nextAnimationSequence) return false;
   state.nextAnimationSequence += 1;
   if (type === 'fdAT') {
-    if (!context.hasImageData || !state.animationNeedsFrameData || length < 4) return false;
-    state.animationFrameBytes += length - 4;
+    const frame = state.animationImageFrames.at(-1);
+    if (!context.hasImageData || !frame || length < 4) return false;
+    frame.compressedBytes += length - 4;
+    frame.chunks.push(bytes.subarray(dataStart + 4, dataEnd));
     return true;
   }
 
@@ -492,9 +537,17 @@ function pngAnimationChunkIsValid(
       || frameWidth !== context.width || frameHeight !== context.height
       || xOffset !== 0 || yOffset !== 0) return false;
   } else {
-    if (state.animationNeedsFrameData && state.animationFrameBytes === 0) return false;
-    state.animationNeedsFrameData = true;
-    state.animationFrameBytes = 0;
+    const previousFrame = state.animationImageFrames.at(-1);
+    const pixels = frameWidth * frameHeight;
+    if ((previousFrame && previousFrame.compressedBytes === 0)
+      || state.imagePixels > MAX_IMAGE_PIXELS - pixels) return false;
+    state.imagePixels += pixels;
+    state.animationImageFrames.push({
+      chunks: [],
+      compressedBytes: 0,
+      height: frameHeight,
+      width: frameWidth,
+    });
   }
   state.animationFrameControls += 1;
   return state.animationFrameControls <= state.animationFrames;
@@ -528,7 +581,13 @@ function knownPngAncillaryChunkIsValid(
       && validPngKeyword(bytes, dataStart, nameEnd)
       && methodOffset < dataEnd
       && bytes[methodOffset] === 0
-      && validPngZlibHeader(bytes, methodOffset + 1, dataEnd);
+      && retainPngCompressedMetadata(
+        bytes,
+        methodOffset + 1,
+        dataEnd,
+        'profile',
+        state.compressedMetadata,
+      );
   }
   if (type === 'sBIT') {
     const channels = ({ 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 } as Record<number, number>)[context.colorType] ?? 0;
@@ -573,7 +632,7 @@ function knownPngAncillaryChunkIsValid(
       && (bytes[dataStart + 6] ?? 61) <= 60;
   }
   if (type === 'tEXt' || type === 'zTXt' || type === 'iTXt') {
-    return pngTextFieldsAreValid(type, bytes, dataStart, dataEnd);
+    return pngTextFieldsAreValid(type, bytes, dataStart, dataEnd, state.compressedMetadata);
   }
   return false;
 }
@@ -582,7 +641,7 @@ function completePngAncillaryStateIsValid(state: PngAncillaryValidationState): b
   return !(state.seen.has('mDCV') && !state.seen.has('cICP'))
     && (state.animationFrames === null
       || (state.animationFrameControls === state.animationFrames
-        && (!state.animationNeedsFrameData || state.animationFrameBytes > 0)));
+        && state.animationImageFrames.every((frame) => frame.compressedBytes > 0)));
 }
 
 interface PngScanlinePass {
@@ -591,12 +650,17 @@ interface PngScanlinePass {
   width: number;
 }
 
-interface StructuredPngImageData {
+interface PngImageDataStream {
+  compressed: Uint8Array;
+  passes: PngScanlinePass[];
+}
+
+interface StructuredPngImageData extends PngImageDataStream {
+  animationFrames: PngImageDataStream[];
   bitDepth: number;
   colorType: number;
-  compressed: Uint8Array;
+  compressedMetadata: PngCompressedMetadata[];
   paletteEntries: number;
-  passes: PngScanlinePass[];
 }
 
 function pngPassSize(size: number, start: number, step: number): number {
@@ -634,6 +698,34 @@ function pngScanlinePasses(
   return passes.length ? passes : null;
 }
 
+function concatenatePngImageData(chunks: Uint8Array[], byteLength: number): Uint8Array {
+  const compressed = Buffer.allocUnsafe(byteLength);
+  let compressedOffset = 0;
+  for (const chunk of chunks) {
+    compressed.set(chunk, compressedOffset);
+    compressedOffset += chunk.length;
+  }
+  return compressed;
+}
+
+function structuredPngAnimationFrames(
+  state: PngAncillaryValidationState,
+  bitDepth: number,
+  colorType: number,
+  interlace: number,
+): PngImageDataStream[] | null {
+  const frames: PngImageDataStream[] = [];
+  for (const frame of state.animationImageFrames) {
+    const passes = pngScanlinePasses(frame.width, frame.height, bitDepth, colorType, interlace);
+    if (!passes || frame.compressedBytes <= 0) return null;
+    frames.push({
+      compressed: concatenatePngImageData(frame.chunks, frame.compressedBytes),
+      passes,
+    });
+  }
+  return frames;
+}
+
 function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null {
   if (bytes.length < 45 || !startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return null;
   let offset = 8;
@@ -649,10 +741,11 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
   let imageDataBytes = 0;
   const imageDataChunks: Uint8Array[] = [];
   const ancillaryState: PngAncillaryValidationState = {
-    animationFrameBytes: 0,
     animationFrameControls: 0,
     animationFrames: null,
-    animationNeedsFrameData: false,
+    animationImageFrames: [],
+    compressedMetadata: [],
+    imagePixels: 0,
     nextAnimationSequence: 0,
     seen: new Set(),
     suggestedPaletteNames: new Set(),
@@ -676,6 +769,7 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
       width = uint32BigEndian(bytes, dataStart);
       height = uint32BigEndian(bytes, dataStart + 4);
       interlace = bytes[dataStart + 12] ?? 0;
+      ancillaryState.imagePixels = width * height;
     } else if (type === 'IHDR') {
       return null;
     } else if (type === 'PLTE') {
@@ -701,14 +795,17 @@ function inspectStructuredPng(bytes: Uint8Array): StructuredPngImageData | null 
         || !completePngAncillaryStateIsValid(ancillaryState)
         || chunkEnd !== bytes.length) return null;
       const passes = pngScanlinePasses(width, height, bitDepth, colorType, interlace);
-      if (!passes) return null;
-      const compressed = Buffer.allocUnsafe(imageDataBytes);
-      let compressedOffset = 0;
-      for (const chunk of imageDataChunks) {
-        compressed.set(chunk, compressedOffset);
-        compressedOffset += chunk.length;
-      }
-      return { bitDepth, colorType, compressed, paletteEntries, passes };
+      const animationFrames = structuredPngAnimationFrames(ancillaryState, bitDepth, colorType, interlace);
+      if (!passes || !animationFrames) return null;
+      return {
+        animationFrames,
+        bitDepth,
+        colorType,
+        compressed: concatenatePngImageData(imageDataChunks, imageDataBytes),
+        compressedMetadata: ancillaryState.compressedMetadata,
+        paletteEntries,
+        passes,
+      };
     } else if (PNG_KNOWN_ANCILLARY_CHUNKS.has(type)) {
       if (!knownPngAncillaryChunkIsValid(type, bytes, dataStart, dataEnd, {
         bitDepth,
@@ -838,9 +935,11 @@ interface CompressedImageDecodeRequest {
 
 interface PngImageDecodeRequest {
   kind: 'png';
+  animationFrames: PngImageDataStream[];
   bitDepth: number;
   colorType: number;
   compressed: Uint8Array;
+  compressedMetadata: PngCompressedMetadata[];
   paletteEntries: number;
   passes: PngScanlinePass[];
 }
@@ -866,6 +965,11 @@ async function runProjectImageDecoderNow(
   if (request.kind !== 'png' && (!request.images.length || request.images.length > MAX_WEBP_IMAGE_CHUNKS)) {
     throw new Error('Task image decoding could not start.');
   }
+  if (request.kind === 'png'
+    && (request.animationFrames.length > MAX_PNG_ANIMATION_FRAMES
+      || request.compressedMetadata.length > MAX_PNG_COMPRESSED_METADATA_STREAMS)) {
+    throw new Error('Task image decoding could not start.');
+  }
   try {
     return await new Promise((resolve, reject) => {
       let settled = false;
@@ -878,9 +982,17 @@ async function runProjectImageDecoderNow(
         workerData: request.kind === 'png'
           ? {
             kind: request.kind,
+            animationFrames: request.animationFrames.map((frame) => ({
+              compressed: Uint8Array.from(frame.compressed),
+              passes: frame.passes.map((pass) => ({ ...pass })),
+            })),
             bitDepth: request.bitDepth,
             colorType: request.colorType,
             compressed: Uint8Array.from(request.compressed),
+            compressedMetadata: request.compressedMetadata.map((metadata) => ({
+              compressed: Uint8Array.from(metadata.compressed),
+              kind: metadata.kind,
+            })),
             paletteEntries: request.paletteEntries,
             passes: request.passes.map((pass) => ({ ...pass })),
           }
@@ -948,9 +1060,11 @@ async function runProjectImageDecoder(
 async function hasValidPngImageData(image: StructuredPngImageData): Promise<boolean> {
   return (await runProjectImageDecoder({
     kind: 'png',
+    animationFrames: image.animationFrames,
     bitDepth: image.bitDepth,
     colorType: image.colorType,
     compressed: image.compressed,
+    compressedMetadata: image.compressedMetadata,
     paletteEntries: image.paletteEntries,
     passes: image.passes,
   }))?.valid === true;

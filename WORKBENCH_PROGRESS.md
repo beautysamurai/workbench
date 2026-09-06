@@ -1974,3 +1974,41 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this recognized-ancillary correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
 - Blocker: none established.
+
+### 2026-09-06 17:24 JST — P0-002 complete compressed-PNG-stream review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `b991542` passed both workflow events: the two Linux verification jobs each completed in 28 seconds, and the Windows package jobs completed in 1 minute 51 seconds and 1 minute 53 seconds. Automated Codex review completed on that exact commit after all 37 prior threads were resolved and opened two P2 findings.
+- Both findings are accepted. CRC-correct `iCCP`, `zTXt`, and compressed `iTXt` chunks were admitted after only their zlib header was checked, while APNG `fdAT` bytes were counted but only the base `IDAT` stream was decoded. Truncated streams or trailing compressed input could therefore be persisted despite malformed recognized PNG content.
+- Before correction, `node /tmp/workbench-p0-png-compressed-repro.cjs` supplied a corrupt compressed-text stream and a corrupt second APNG frame. Both were accepted (`{"metadataAccepted":true,"apngAccepted":true}`), and the command exited `1`.
+
+**Scoped correction**
+
+- The container parser now retains the complete compressed ranges for `iCCP`, `zTXt`, and compressed `iTXt`. The bounded image worker fully consumes and inflates every retained stream under a 32 MiB aggregate metadata-output cap, rejects trailing compressed input, requires nonempty profile content, forbids nulls in compressed text, and applies fatal UTF-8 decoding to compressed international text.
+- Every APNG frame now retains and concatenates its ordered `fdAT` payloads, derives scanline passes from the corresponding `fcTL` dimensions, and runs through the same complete zlib, filter-byte, and indexed-palette validation as the base image. Base and animated streams share the existing 5 MiB compressed-input, 160 MiB inflated-output, and 40-million-pixel limits, with a maximum of 128 declared frames.
+- Focused regressions retain valid compressed Latin-1 and UTF-8 metadata plus a valid two-frame APNG. They reject corrupt and trailing metadata/APNG streams, invalid compressed UTF-8, metadata expanding beyond the aggregate cap, and an indexed APNG frame whose reconstructed sample exceeds the palette.
+- Files changed: `src/main/project-system.ts`, `src/main/project-image-decoder-worker.ts`, `tests/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node --test dist-test/tests/project-system.test.js` | The focused project-system file passed valid/corrupt/trailing compressed metadata, valid/corrupt/trailing APNG, aggregate-output, UTF-8, and indexed-frame cases plus every prior task/image case; exit `0`. |
+| passed | `node /tmp/workbench-p0-png-compressed-repro.cjs` | The exact malformed metadata and APNG fixtures are both rejected (`{"metadataAccepted":false,"apngAccepted":false}`); exit `0`. |
+| passed | `node /tmp/workbench-p0-png-ancillary-repro.cjs` | The preceding color-type-4 `tRNS` correction remains effective (`accepted: false`); exit `0`. |
+| passed | `node /tmp/workbench-p0-png-corpus.cjs` | All 221 PNG files at or below the task-image size limit under `/usr/share` remained accepted; exit `0`. |
+| passed | `npm run check:portable` | Strict type checks and all 13 portable test files passed; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `malformedPngMetadataRejected`, `malformedApngRejected`, `illegalAncillaryRejected`, `initCommitSafe`, and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for over six seconds until intentional SIGINT (npm reported expected signal exit `1`), then `pgrep -a -x electron` found no process (expected no-match exit `1`). Existing DBus warnings were non-fatal. |
+| passed | three parallel emitted WSL runs | After rebuilding the emitted tests removed by production cleanup, all three independent runs passed all 27 cases; exit `0` each. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this complete-stream correction, reply to and resolve both accepted findings, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.

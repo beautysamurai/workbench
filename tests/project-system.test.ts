@@ -507,6 +507,8 @@ test('rejects PNGs without image data or with corrupted chunk data', async () =>
 test('validates recognized PNG ancillary chunk structure and ordering', async () => {
   const png = tinyPng();
   const compressedMetadata = deflateSync(Buffer.from('metadata'));
+  const compressedUtf8Metadata = deflateSync(Buffer.from('日本語'));
+  const truncatedZlib = Buffer.from([0x78, 0x9c, 0xff, 0xff, 0xff, 0xff]);
   const physicalDimensions = Buffer.alloc(9);
   physicalDimensions[8] = 1;
   const frameControl = Buffer.alloc(26);
@@ -514,6 +516,17 @@ test('validates recognized PNG ancillary chunk structure and ordering', async ()
   frameControl.writeUInt32BE(1, 8);
   const animationControl = Buffer.alloc(8);
   animationControl.writeUInt32BE(1, 0);
+  const twoFrameAnimationControl = Buffer.from(animationControl);
+  twoFrameAnimationControl.writeUInt32BE(2, 0);
+  const secondFrameControl = Buffer.from(frameControl);
+  secondFrameControl.writeUInt32BE(1, 0);
+  const pngBuffer = Buffer.from(png);
+  const imageDataTypeOffset = pngBuffer.indexOf('IDAT');
+  assert.notEqual(imageDataTypeOffset, -1);
+  const imageDataLength = pngBuffer.readUInt32BE(imageDataTypeOffset - 4);
+  const validFrameData = Buffer.alloc(imageDataLength + 4);
+  validFrameData.writeUInt32BE(2, 0);
+  validFrameData.set(pngBuffer.subarray(imageDataTypeOffset + 4, imageDataTypeOffset + 4 + imageDataLength), 4);
   const validBeforeImageData: Array<[string, Uint8Array]> = [
     ['cHRM', Buffer.alloc(32)],
     ['gAMA', Buffer.from([0, 0, 0xb1, 0x8f])],
@@ -547,11 +560,26 @@ test('validates recognized PNG ancillary chunk structure and ordering', async ()
       pngChunk('fcTL', frameControl),
     ]),
   })).mediaType, 'image/png');
+  const twoFrameHeader = pngWithChunksBefore(png, 'IDAT', [
+    pngChunk('acTL', twoFrameAnimationControl),
+    pngChunk('fcTL', frameControl),
+  ]);
+  assert.equal((await validateProjectTaskImage({
+    bytes: pngWithChunksBefore(twoFrameHeader, 'IEND', [
+      pngChunk('fcTL', secondFrameControl),
+      pngChunk('fdAT', validFrameData),
+    ]),
+  })).mediaType, 'image/png');
 
   const validAnywhere: Array<[string, Uint8Array]> = [
     ['tEXt', Buffer.from('Comment\0plain text')],
     ['zTXt', Buffer.concat([Buffer.from('Comment\0\0'), compressedMetadata])],
     ['iTXt', Buffer.from('Comment\0\0\0en\0Comment\0plain text')],
+    ['iTXt', Buffer.concat([
+      Buffer.from('Comment\0'),
+      Buffer.from([1, 0, 0, 0]),
+      compressedUtf8Metadata,
+    ])],
     ['tIME', Buffer.from([0x07, 0xe8, 1, 1, 0, 0, 0])],
     ['vpAg', Buffer.from([1, 2, 3])],
   ];
@@ -574,6 +602,37 @@ test('validates recognized PNG ancillary chunk structure and ordering', async ()
     pngWithChunksBefore(png, 'IEND', [pngChunk('gAMA', Buffer.alloc(4))]),
     pngWithChunksBefore(png, 'IEND', [pngChunk('tIME', Buffer.from([0x07, 0xe8, 13, 1, 0, 0, 0]))]),
     pngWithChunksBefore(png, 'IEND', [pngChunk('tEXt', Buffer.from('missing separator'))]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('iCCP', Buffer.concat([Buffer.from('profile\0\0'), truncatedZlib])),
+    ]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('zTXt', Buffer.concat([Buffer.from('Comment\0\0'), truncatedZlib])),
+    ]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('iTXt', Buffer.concat([Buffer.from('Comment\0'), Buffer.from([1, 0, 0, 0]), truncatedZlib])),
+    ]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('zTXt', Buffer.concat([Buffer.from('Comment\0\0'), compressedMetadata, Buffer.from([0])])),
+    ]),
+    pngWithChunksBefore(png, 'IDAT', [
+      pngChunk('iTXt', Buffer.concat([
+        Buffer.from('Comment\0'),
+        Buffer.from([1, 0, 0, 0]),
+        deflateSync(Buffer.from([0xff])),
+      ])),
+    ]),
+    pngWithChunksBefore(twoFrameHeader, 'IEND', [
+      pngChunk('fcTL', secondFrameControl),
+      pngChunk('fdAT', Buffer.concat([Buffer.from([0, 0, 0, 2]), truncatedZlib])),
+    ]),
+    pngWithChunksBefore(twoFrameHeader, 'IEND', [
+      pngChunk('fcTL', secondFrameControl),
+      pngChunk('fdAT', Buffer.concat([validFrameData, Buffer.from([0])])),
+    ]),
+    pngWithChunksBefore(png, 'IDAT', [pngChunk('zTXt', Buffer.concat([
+      Buffer.from('Comment\0\0'),
+      deflateSync(Buffer.alloc((32 * 1024 * 1024) + 1, 0x61), { level: 9 }),
+    ]))]),
   ];
   for (const invalidPng of invalidPngs) {
     await assert.rejects(validateProjectTaskImage({ bytes: invalidPng }), /PNG, JPEG, or WebP/);
@@ -592,6 +651,20 @@ test('validates recognized PNG ancillary chunk structure and ordering', async ()
     pngWithChunksBefore(indexed, 'IDAT', [pngChunk('tRNS', Buffer.from([0xff, 0xff]))]),
     pngWithChunksBefore(indexed, 'IDAT', [pngChunk('bKGD', Buffer.from([1]))]),
     pngWithChunksBefore(indexed, 'IDAT', [pngChunk('hIST', Buffer.alloc(4))]),
+    pngWithChunksBefore(
+      pngWithChunksBefore(indexed, 'IDAT', [
+        pngChunk('acTL', twoFrameAnimationControl),
+        pngChunk('fcTL', frameControl),
+      ]),
+      'IEND',
+      [
+        pngChunk('fcTL', secondFrameControl),
+        pngChunk('fdAT', Buffer.concat([
+          Buffer.from([0, 0, 0, 2]),
+          deflateSync(Uint8Array.of(0, 1)),
+        ])),
+      ],
+    ),
   ]) {
     await assert.rejects(validateProjectTaskImage({ bytes: invalidIndexed }), /PNG, JPEG, or WebP/);
   }
