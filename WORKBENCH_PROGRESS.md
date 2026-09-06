@@ -2012,3 +2012,38 @@ Append new entries below this heading. Keep commands and outcomes exact; concise
 
 - Commit and push this complete-stream correction, reply to and resolve both accepted findings, then require green CI and a clean automated re-review on the exact new head.
 - Blocker: none established.
+
+### 2026-09-06 18:07 JST — P0-002 post-install task-edit review correction
+
+**Exact-head review and reproduction**
+
+- Exact head `41d6c08` passed both workflow events: Linux verification completed in 27 and 29 seconds, and Windows packaging completed in 1 minute 47 seconds and 2 minutes 44 seconds. Automated Codex review completed on that exact commit after all 39 prior threads were resolved and opened one P2 finding.
+- The finding is accepted. After the complete candidate was hard-linked at public `TASKS.md`, it remained writable while post-install digest/link checks could still fail. A non-locking editor could append through that public path, after which rollback deleted the edited candidate inode and restored the old claim, silently losing the edit before a clean retry.
+- Before correction, the new deterministic WSL regression injected the edit through `sha256sum` as soon as the public candidate had two links. Task creation eventually returned success with one task, but `Concurrent post-install note.` was absent; the WSL file reported 27 passes and this one failure, and exited `1`.
+
+**Scoped correction**
+
+- A complete task candidate is now created as mode `0400` from its first pathname-visible instant while Workbench retains the pinned write descriptor used to assemble it. It remains read-only through pre-link, linked, temporary-unlink, identity, mode, size, link-count, and digest validation.
+- Only after every rollback-capable check passes does Workbench restore the prior task-file mode through the pinned descriptor. That successful transition is immediately marked committed, so an editor can first modify the public inode only at a boundary after which rollback preserves it.
+- The earlier pre-install rewrite regression now explicitly changes the read-only candidate back to writable before corrupting it, retaining deterministic coverage that candidate tampering is detected, discarded, and retried. The new regression distinguishes the old writable-linked phase from the new final-mode transition and requires the concurrent note, exactly one new task, the original `0644` mode, and no transaction artifacts.
+- Files changed: `src/main/project-system.ts`, `tests/wsl/project-system.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `CHANGELOG.md`, and this append-only progress record.
+
+**Verification after correction**
+
+| Result | Exact command or check | Evidence / notes |
+|---|---|---|
+| passed | `npm run build:tests && node dist-test/tests/wsl/project-system.test.js` | All 28 named task/image/filesystem cases passed, including both pre-install candidate tampering and the post-install editor boundary; exit `0`. |
+| passed | `npm run check` | Strict type checks and all 14 full test files, including WSL integration, passed; exit `0`. |
+| unavailable | lint/static analysis | `package.json` defines no lint script. |
+| passed | `npm run dist:dir` | Production main/renderer compilation and Linux directory packaging completed; exit `0`. |
+| passed | packaged-ASAR validator | Electron loaded the packaged project service; `postInstallEditSafe`, `candidateRaceSafe`, `malformedPngMetadataRejected`, `malformedApngRejected`, `initCommitSafe`, and every prior image/task-filesystem flag were true; exit `0`. |
+| passed | bounded full-app launch and cleanup | The production app remained running for over six seconds until intentional SIGINT, then `pgrep -a -x electron` found no process (expected no-match exit `1`). Existing DBus warnings were non-fatal. |
+| passed | three parallel emitted WSL runs | After rebuilding the emitted tests removed by production cleanup, all three independent runs passed all 28 cases; exit `0` each. |
+| passed | PNG regression and compatibility probes | Both standalone malformed-PNG reproducers rejected their fixtures, while all 221 eligible `/usr/share` PNGs remained accepted; exit `0`. |
+| passed | `npm audit --omit=dev` | npm reported zero known production dependency vulnerabilities; exit `0`. |
+| passed | `git diff --check` | The scoped source, test, and documentation changes contain no whitespace errors; exit `0`. |
+
+**Next action**
+
+- Commit and push this final-mode commit-boundary correction, reply to and resolve the accepted finding, then require green CI and a clean automated re-review on the exact new head.
+- Blocker: none established.

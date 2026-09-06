@@ -1679,9 +1679,10 @@ async function commitProjectTask(
     const committedHash = createHash('sha256').update(tasksMarkdown).update(appendBytes).digest('hex');
     const committedBytes = Buffer.byteLength(tasksMarkdown, 'utf8') + appendBytes.length;
     try {
-      // Editors do not honor Workbench's advisory lock. Build a pinned complete candidate first,
+      // Editors do not honor Workbench's advisory lock. Build a pinned read-only candidate first,
       // atomically claim the exact validated directory entry, then install without clobbering a
-      // replacement. A stale claim is restored and retried from the editor's current contents.
+      // replacement. The public inode becomes writable only at the final commit boundary, after
+      // every rollback-capable check, so a later editor change remains authoritative.
       await runProjectScript(workspace, [
         ...projectTaskLockStatements(),
         ...projectTasksFileHandleStatements('update'),
@@ -1700,26 +1701,26 @@ async function commitProjectTask(
         'target_mode=$(stat -Lc %a -- "$target_fd" 2>/dev/null) || { printf "TASKS.md permissions cannot be read" >&2; exit 4; }',
         `expected_candidate_size=${committedBytes}`,
         `expected_candidate_hash=${shellQuote(committedHash)}`,
-        'revalidate_task_candidate() { expected_candidate_links="$1"; if [ -z "$candidate_fd" ] || [ -z "$candidate_identity" ] || [ ! -f "$candidate_fd" ]; then return 1; fi; candidate_check_identity=$(stat -Lc "%d:%i" -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_links=$(stat -Lc %h -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_mode=$(stat -Lc %a -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_size=$(stat -Lc %s -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_hash=$(sha256sum -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_hash=${candidate_check_hash%% *}; [ "$candidate_check_identity" = "$candidate_identity" ] && [ "$candidate_check_links" = "$expected_candidate_links" ] && [ "$candidate_check_mode" = "$target_mode" ] && [ "$candidate_check_size" = "$expected_candidate_size" ] && [ "$candidate_check_hash" = "$expected_candidate_hash" ]; }',
+        'candidate_install_mode=400',
+        'revalidate_task_candidate() { expected_candidate_links="$1"; if [ -z "$candidate_fd" ] || [ -z "$candidate_identity" ] || [ ! -f "$candidate_fd" ]; then return 1; fi; candidate_check_identity=$(stat -Lc "%d:%i" -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_links=$(stat -Lc %h -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_mode=$(stat -Lc %a -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_size=$(stat -Lc %s -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_hash=$(sha256sum -- "$candidate_fd" 2>/dev/null) || return 1; candidate_check_hash=${candidate_check_hash%% *}; [ "$candidate_check_identity" = "$candidate_identity" ] && [ "$candidate_check_links" = "$expected_candidate_links" ] && [ "$candidate_check_mode" = "$candidate_install_mode" ] && [ "$candidate_check_size" = "$expected_candidate_size" ] && [ "$candidate_check_hash" = "$expected_candidate_hash" ]; }',
         'candidate_path_is_pinned() { [ ! -L "$candidate" ] && [ -f "$candidate" ] && [ "$(stat -Lc "%d:%i" -- "$candidate" 2>/dev/null)" = "$candidate_identity" ]; }',
         'current_tasks_hash=$(sha256sum -- "$target_fd" 2>/dev/null) || { printf "TASKS.md could not be revalidated" >&2; exit 5; }',
         'current_tasks_hash=${current_tasks_hash%% *}',
         `if [ "$current_tasks_hash" != ${shellQuote(currentHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
         `if grep -Eq ${shellQuote(`^###[[:space:]]+${taskId}([[:space:]]|$)`)} "$target_fd"; then printf "Task id already exists" >&2; exit 5; fi`,
-        'umask 077',
+        'umask 266',
         'set -C',
         'exec 3> "$candidate" || { set +C; printf "Task update could not be created" >&2; exit 5; }',
         'set +C',
         'candidate_fd="/proc/$$/fd/3"',
         'candidate_identity=$(stat -Lc "%d:%i" -- "$candidate_fd" 2>/dev/null) || { printf "Task update is unsafe" >&2; exit 5; }',
-        'if [ ! -f "$candidate_fd" ] || [ "$(stat -Lc %h -- "$candidate_fd" 2>/dev/null)" != 1 ]; then printf "Task update is unsafe" >&2; exit 5; fi',
+        'if [ ! -f "$candidate_fd" ] || [ "$(stat -Lc %h -- "$candidate_fd" 2>/dev/null)" != 1 ] || [ "$(stat -Lc %a -- "$candidate_fd" 2>/dev/null)" != "$candidate_install_mode" ]; then printf "Task update is unsafe" >&2; exit 5; fi',
         'cat -- "$target_fd" >&3 || { printf "TASKS.md could not be copied" >&2; exit 5; }',
         'cat >&3 || { printf "Task update could not be written" >&2; exit 5; }',
         `candidate_size=$(stat -Lc %s -- "$candidate_fd" 2>/dev/null) || { printf "Task update is unsafe" >&2; exit 5; }; if [ "$candidate_size" -ne ${committedBytes} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
         'candidate_hash=$(sha256sum -- "$candidate_fd" 2>/dev/null) || { printf "Task update could not be validated" >&2; exit 5; }',
         'candidate_hash=${candidate_hash%% *}',
         `if [ "$candidate_hash" != ${shellQuote(committedHash)} ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
-        'chmod "$target_mode" "$candidate_fd" || { printf "Task update permissions could not be set" >&2; exit 5; }',
         `if ! candidate_path_is_pinned || ! revalidate_task_candidate 1; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
         `if [ -L "$target" ] || [ ! -f "$target" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
         'current_target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md changed while the task was being prepared" >&2; exit 10; }',
@@ -1743,11 +1744,12 @@ async function commitProjectTask(
         'installed_target_identity=$(stat -Lc "%d:%i" -- "$target" 2>/dev/null) || { printf "TASKS.md candidate installation changed" >&2; exit 10; }',
         'installed_target_hash=$(sha256sum -- "$target" 2>/dev/null) || { printf "TASKS.md candidate installation changed" >&2; exit 10; }',
         'installed_target_hash=${installed_target_hash%% *}',
-        `if ! candidate_path_is_pinned || ! revalidate_task_candidate 2 || [ -L "$target" ] || [ ! -f "$target" ] || [ "$installed_target_identity" != "$candidate_identity" ] || [ "$(stat -Lc %h -- "$target" 2>/dev/null)" != 2 ] || [ "$(stat -Lc %a -- "$target" 2>/dev/null)" != "$target_mode" ] || [ "$(stat -Lc %s -- "$target" 2>/dev/null)" != "$expected_candidate_size" ] || [ "$installed_target_hash" != "$expected_candidate_hash" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        `if ! candidate_path_is_pinned || ! revalidate_task_candidate 2 || [ -L "$target" ] || [ ! -f "$target" ] || [ "$installed_target_identity" != "$candidate_identity" ] || [ "$(stat -Lc %h -- "$target" 2>/dev/null)" != 2 ] || [ "$(stat -Lc %a -- "$target" 2>/dev/null)" != "$candidate_install_mode" ] || [ "$(stat -Lc %s -- "$target" 2>/dev/null)" != "$expected_candidate_size" ] || [ "$installed_target_hash" != "$expected_candidate_hash" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
         'rm -f -- "$candidate" || { printf "Task update temporary file could not be removed" >&2; exit 5; }',
         'installed_target_hash=$(sha256sum -- "$target" 2>/dev/null) || { printf "TASKS.md candidate installation changed" >&2; exit 10; }',
         'installed_target_hash=${installed_target_hash%% *}',
-        `if [ -e "$candidate" ] || [ -L "$candidate" ] || ! revalidate_task_candidate 1 || [ -L "$target" ] || [ ! -f "$target" ] || [ "$(stat -Lc "%d:%i" -- "$target" 2>/dev/null)" != "$candidate_identity" ] || [ "$(stat -Lc %h -- "$target" 2>/dev/null)" != 1 ] || [ "$(stat -Lc %a -- "$target" 2>/dev/null)" != "$target_mode" ] || [ "$(stat -Lc %s -- "$target" 2>/dev/null)" != "$expected_candidate_size" ] || [ "$installed_target_hash" != "$expected_candidate_hash" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        `if [ -e "$candidate" ] || [ -L "$candidate" ] || ! revalidate_task_candidate 1 || [ -L "$target" ] || [ ! -f "$target" ] || [ "$(stat -Lc "%d:%i" -- "$target" 2>/dev/null)" != "$candidate_identity" ] || [ "$(stat -Lc %h -- "$target" 2>/dev/null)" != 1 ] || [ "$(stat -Lc %a -- "$target" 2>/dev/null)" != "$candidate_install_mode" ] || [ "$(stat -Lc %s -- "$target" 2>/dev/null)" != "$expected_candidate_size" ] || [ "$installed_target_hash" != "$expected_candidate_hash" ]; then printf ${shellQuote(PROJECT_TASKS_CHANGED_ERROR)} >&2; exit 10; fi`,
+        'chmod "$target_mode" "$candidate_fd" || { printf "Task update permissions could not be set" >&2; exit 5; }',
         'committed=1',
         'rm -f -- "$claim" 2>/dev/null || true',
         'exec 6<&-',

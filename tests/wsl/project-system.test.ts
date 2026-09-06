@@ -285,6 +285,7 @@ if [[ "$source_path" == /proc/*/fd/3 ]] && [[ "$target_path" == */TASKS.md ]] &&
   : > "$WORKBENCH_TEST_CANDIDATE_MARKER"
   for candidate in "$WORKBENCH_TEST_CANDIDATE_ROOT"/.TASKS.md.workbench-next-*; do
     if [ -f "$candidate" ]; then
+      chmod 0600 "$candidate"
       printf '# Concurrent candidate rewrite\\n' > "$candidate"
       break
     fi
@@ -320,6 +321,72 @@ exec /usr/bin/ln "$@"
       else process.env.WORKBENCH_TEST_CANDIDATE_MARKER = oldEnvironment.marker;
       if (oldEnvironment.root === undefined) delete process.env.WORKBENCH_TEST_CANDIDATE_ROOT;
       else process.env.WORKBENCH_TEST_CANDIDATE_ROOT = oldEnvironment.root;
+      fs.rmSync(toolsDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+test('preserves an in-place task edit at the final installation boundary', async () => {
+  await temporaryWorkspace(async (workspace, directory) => {
+    const toolsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-task-post-install-tools-'));
+    const tasksPath = path.join(directory, 'TASKS.md');
+    const marker = path.join(toolsDirectory, 'changed');
+    const chmodWrapper = path.join(toolsDirectory, 'chmod');
+    const sha256sumWrapper = path.join(toolsDirectory, 'sha256sum');
+    fs.writeFileSync(tasksPath, '# Tasks\n\n### P1-004 — Parent\n\n- **State:** pending\n- **Priority:** P1\n- **Objective:** Parent.\n', 'utf8');
+    fs.writeFileSync(sha256sumWrapper, [
+      '#!/bin/bash',
+      'set -u',
+      'target="$2"',
+      'if [[ "$target" == */TASKS.md ]] && [ "$(/usr/bin/stat -Lc %a -- "$target" 2>/dev/null)" != 400 ] && [ "$(/usr/bin/stat -Lc %h -- "$target" 2>/dev/null)" = 2 ] && [ ! -e "$WORKBENCH_TEST_POST_INSTALL_MARKER" ]; then',
+      "  printf 'sha\\n' > \"$WORKBENCH_TEST_POST_INSTALL_MARKER\"",
+      "  printf '\\nConcurrent post-install note.\\n' >> \"$target\"",
+      'fi',
+      'exec /usr/bin/sha256sum "$@"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    fs.writeFileSync(chmodWrapper, [
+      '#!/bin/bash',
+      'set -u',
+      '/usr/bin/chmod "$@"',
+      'status=$?',
+      'target="$2"',
+      'if [ "$status" -eq 0 ] && [[ "$target" == /proc/*/fd/3 ]] && [ -f "$WORKBENCH_TEST_POST_INSTALL_TASKS" ] && [ "$(/usr/bin/stat -Lc "%d:%i" -- "$target" 2>/dev/null)" = "$(/usr/bin/stat -Lc "%d:%i" -- "$WORKBENCH_TEST_POST_INSTALL_TASKS" 2>/dev/null)" ] && [ ! -e "$WORKBENCH_TEST_POST_INSTALL_MARKER" ]; then',
+      "  printf 'chmod\\n' > \"$WORKBENCH_TEST_POST_INSTALL_MARKER\"",
+      "  printf '\\nConcurrent post-install note.\\n' >> \"$WORKBENCH_TEST_POST_INSTALL_TASKS\"",
+      'fi',
+      'exit "$status"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const oldEnvironment = {
+      path: process.env.PATH,
+      marker: process.env.WORKBENCH_TEST_POST_INSTALL_MARKER,
+      tasks: process.env.WORKBENCH_TEST_POST_INSTALL_TASKS,
+    };
+    process.env.PATH = toolsDirectory + ':' + (oldEnvironment.path ?? '');
+    process.env.WORKBENCH_TEST_POST_INSTALL_MARKER = marker;
+    process.env.WORKBENCH_TEST_POST_INSTALL_TASKS = tasksPath;
+    try {
+      const updated = await addProjectTask(workspace, {
+        title: 'Post-install-safe child',
+        priority: 'P1',
+        parentId: 'P1-004',
+      });
+      assert.equal(fs.existsSync(marker), true, 'The test must edit the public candidate at its writable boundary.');
+      assert.equal(fs.readFileSync(marker, 'utf8').trim(), 'chmod');
+      assert.equal(updated.tasks.at(-1)?.title, 'Post-install-safe child');
+      const markdown = fs.readFileSync(tasksPath, 'utf8');
+      assert.match(markdown, /Concurrent post-install note\./);
+      assert.equal((markdown.match(/^### WB-005 — Post-install-safe child$/gm) ?? []).length, 1);
+      assert.equal(fs.statSync(tasksPath).mode & 0o777, 0o644);
+      assert.deepEqual(fs.readdirSync(directory).filter((name) => name.includes('.TASKS.md.workbench-')), []);
+    } finally {
+      if (oldEnvironment.path === undefined) delete process.env.PATH;
+      else process.env.PATH = oldEnvironment.path;
+      if (oldEnvironment.marker === undefined) delete process.env.WORKBENCH_TEST_POST_INSTALL_MARKER;
+      else process.env.WORKBENCH_TEST_POST_INSTALL_MARKER = oldEnvironment.marker;
+      if (oldEnvironment.tasks === undefined) delete process.env.WORKBENCH_TEST_POST_INSTALL_TASKS;
+      else process.env.WORKBENCH_TEST_POST_INSTALL_TASKS = oldEnvironment.tasks;
       fs.rmSync(toolsDirectory, { recursive: true, force: true });
     }
   });
