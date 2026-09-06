@@ -6,6 +6,7 @@ import type {
   ContextBuildResult,
   PersistedState,
   ProjectSystemStatus,
+  ProjectTask,
   TerminalDataEnvelope,
   TerminalExitEnvelope,
   WorkbenchApi,
@@ -96,10 +97,10 @@ const requestListeners = new Set<(event: CodexServerRequestEnvelope) => void>();
 const statusListeners = new Set<(event: CodexConnectionStatus) => void>();
 const terminalDataListeners = new Set<(event: TerminalDataEnvelope) => void>();
 const terminalExitListeners = new Set<(event: TerminalExitEnvelope) => void>();
-const projectTasks = new Map<string, Array<{ id: string; title: string; state: 'pending' | 'in progress' | 'blocked' | 'done'; objective: string }>>([
+const projectTasks = new Map<string, ProjectTask[]>([
   ['curve-server', [
-    { id: 'P0-101', title: 'Repair curve invalidation', state: 'in progress', objective: 'Fix the failing dependency-chain test.' },
-    { id: 'P1-102', title: 'Profile allocation spike', state: 'pending', objective: 'Find avoidable pricing allocations.' },
+    { id: 'P0-101', title: 'Repair curve invalidation', state: 'in progress', priority: 'P0', objective: 'Fix the failing dependency-chain test.', parentId: null, acceptanceCriteria: ['Dependency-chain test passes'], attachments: [] },
+    { id: 'P1-102', title: 'Profile allocation spike', state: 'pending', priority: 'P1', objective: 'Find avoidable pricing allocations.', parentId: 'P0-101', acceptanceCriteria: [], attachments: [] },
   ]],
 ]);
 const mockThreadPreferences = new Map<string, CodexModelPreference>([
@@ -172,13 +173,16 @@ function workspaceById(workspaceId: string): Workspace {
 }
 
 function mockProjectStatus(workspaceId: string): ProjectSystemStatus {
+  const tasks = clone(projectTasks.get(workspaceId) ?? []);
+  const maximum = tasks.reduce((current, task) => Math.max(current, Number(/-(\d+)$/.exec(task.id)?.[1] ?? 0)), 0);
   return {
     files: [
       { name: 'AGENTS.md', exists: true, safe: true },
       { name: 'TASKS.md', exists: true, safe: true },
       { name: 'WORKBENCH_PROGRESS.md', exists: true, safe: true },
     ],
-    tasks: clone(projectTasks.get(workspaceId) ?? []),
+    tasks,
+    nextTaskId: `WB-${String(maximum + 1).padStart(3, '0')}`,
     ready: true,
   };
 }
@@ -217,7 +221,21 @@ export function createMockApi(): WorkbenchApi {
       initialize: async (workspaceId) => mockProjectStatus(workspaceId),
       addTask: async (workspaceId, task) => {
         const tasks = projectTasks.get(workspaceId) ?? [];
-        tasks.push({ id: `WB-${id().slice(0, 8)}`, title: task.title, objective: task.objective || task.title, state: 'pending' });
+        const maximum = tasks.reduce((current, candidate) => Math.max(current, Number(/-(\d+)$/.exec(candidate.id)?.[1] ?? 0)), 0);
+        const taskId = `WB-${String(maximum + 1).padStart(3, '0')}`;
+        tasks.push({
+          id: taskId,
+          title: task.title,
+          objective: task.objective || task.title,
+          state: 'pending',
+          priority: task.priority,
+          parentId: task.parentId || null,
+          acceptanceCriteria: task.acceptanceCriteria ?? [],
+          attachments: (task.images ?? []).map((image, index) => ({
+            path: `.workbench/task-images/${taskId}-${String(index + 1).padStart(2, '0')}.${image.mediaType === 'image/jpeg' ? 'jpg' : image.mediaType.split('/')[1]}`,
+            mediaType: image.mediaType,
+          })),
+        });
         projectTasks.set(workspaceId, tasks);
         return mockProjectStatus(workspaceId);
       },

@@ -17,12 +17,14 @@
     "tests/**/*.ts",
     "src/main/codex-protocol.ts",
     "src/main/path-utils.ts",
+    "src/main/project-image-decoder-worker.ts",
     "src/main/project-system.ts",
     "src/main/wsl.ts",
     "src/main/context-format.ts",
     "src/main/store.ts",
     "src/renderer/codex-transcript.ts",
     "src/renderer/codex-metadata.ts",
+    "src/renderer/project-tasks.ts",
     "src/renderer/terminal-buffer.ts",
     "src/shared/**/*.ts"
   ]
